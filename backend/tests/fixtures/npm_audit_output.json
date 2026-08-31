@@ -1,0 +1,75 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "lodash": {
+      "name": "lodash",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        {
+          "source": 1065,
+          "name": "lodash",
+          "dependency": "lodash",
+          "title": "Prototype Pollution in lodash",
+          "url": "https://github.com/advisories/GHSA-p6mc-m468-83gw",
+          "severity": "high",
+          "cwe": ["CWE-1321"],
+          "cve": "CVE-2019-10744",
+          "range": "<4.17.19"
+        }
+      ],
+      "effects": [],
+      "range": "<4.17.19",
+      "nodes": ["node_modules/lodash"],
+      "fixAvailable": {
+        "name": "lodash",
+        "version": "4.17.21",
+        "isSemVerMajor": false
+      }
+    },
+    "axios": {
+      "name": "axios",
+      "severity": "critical",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1090,
+          "name": "axios",
+          "dependency": "axios",
+          "title": "Server-Side Request Forgery in axios",
+          "url": "https://github.com/advisories/GHSA-8hc4-vh64-cxmj",
+          "severity": "critical",
+          "cwe": ["CWE-918"],
+          "cve": "CVE-2020-28168",
+          "range": "<0.21.1"
+        }
+      ],
+      "effects": [],
+      "range": "<0.21.1",
+      "nodes": ["node_modules/axios"],
+      "fixAvailable": {
+        "name": "axios",
+        "version": "0.21.1",
+        "isSemVerMajor": false
+      }
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 1,
+      "critical": 1,
+      "total": 2
+    },
+    "dependencies": {
+      "prod": 150,
+      "dev": 40,
+      "optional": 0,
+      "peer": 0,
+      "peerOptional": 0,
+      "total": 190
+    }
+  }
+}

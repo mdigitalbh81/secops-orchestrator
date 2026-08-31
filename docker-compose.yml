@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: secops-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-secops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secops}
+      POSTGRES_DB: ${POSTGRES_DB:-secops}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-secops} -d ${POSTGRES_DB:-secops}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: secops-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: secops-api
+    environment:
+      SECOPS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-secops}:${POSTGRES_PASSWORD:-secops}@postgres:5432/${POSTGRES_DB:-secops}
+      SECOPS_DATABASE_URL_SYNC: postgresql://${POSTGRES_USER:-secops}:${POSTGRES_PASSWORD:-secops}@postgres:5432/${POSTGRES_DB:-secops}
+      SECOPS_REDIS_URL: redis://redis:6379/0
+      SECOPS_WORKSPACE_BASE: /tmp/secops-workspaces
+      SECOPS_ALLOWED_WORKSPACE_ROOT: /tmp/secops-workspaces
+    ports:
+      - "${SECOPS_API_PORT:-8008}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - workspaces_data:/tmp/secops-workspaces
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: secops-worker
+    environment:
+      SECOPS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-secops}:${POSTGRES_PASSWORD:-secops}@postgres:5432/${POSTGRES_DB:-secops}
+      SECOPS_DATABASE_URL_SYNC: postgresql://${POSTGRES_USER:-secops}:${POSTGRES_PASSWORD:-secops}@postgres:5432/${POSTGRES_DB:-secops}
+      SECOPS_REDIS_URL: redis://redis:6379/0
+      SECOPS_WORKSPACE_BASE: /tmp/secops-workspaces
+      SECOPS_ALLOWED_WORKSPACE_ROOT: /tmp/secops-workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - workspaces_data:/tmp/secops-workspaces
+
+volumes:
+  postgres_data:
+  redis_data:
+  workspaces_data:

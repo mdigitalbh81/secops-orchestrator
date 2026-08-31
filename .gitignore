@@ -1,0 +1,13 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+security-reports/
+strix_runs/
+.codeql-db-*/
+.idea/
+.vscode/

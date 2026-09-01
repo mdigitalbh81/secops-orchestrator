@@ -48,8 +48,10 @@ async def test_enqueue_scan_fallback_background(db_session: AsyncSession, tmp_pa
     db_session.add(scan)
     await db_session.commit()
 
-    with patch("arq.create_pool", side_effect=Exception("Redis connection error")), \
-         patch("app.workers.scan_worker.run_scan") as mock_run:
+    with (
+        patch("arq.create_pool", side_effect=Exception("Redis connection error")),
+        patch("app.workers.scan_worker.run_scan") as mock_run,
+    ):
         mock_run.return_value = None
         result = await enqueue_scan(scan.id)
         assert result is False

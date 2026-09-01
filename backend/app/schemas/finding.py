@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import FindingStatus, Severity
+from app.models.enums import EvidenceLevel, FindingStatus, Severity
 
 
 class FindingResponse(BaseModel):
@@ -17,6 +17,8 @@ class FindingResponse(BaseModel):
     description: str | None = None
     severity: Severity
     confidence: float
+    evidence_level: EvidenceLevel = EvidenceLevel.SINGLE_SOURCE
+    correlation_group_id: str | None = None
     cwe: str | None = None
     cve: str | None = None
     file_path: str | None = None

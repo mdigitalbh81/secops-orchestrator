@@ -1,4 +1,5 @@
 """Detect which scanners are applicable to a given project directory."""
+
 from __future__ import annotations
 
 import logging

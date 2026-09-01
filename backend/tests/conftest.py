@@ -34,11 +34,9 @@ async def db_session(test_settings: Settings):
     engine = create_async_engine(test_settings.database_url, echo=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         yield session
-
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
@@ -52,10 +50,7 @@ async def client(db_session: AsyncSession):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -77,3 +72,8 @@ def pip_audit_json() -> str:
 @pytest.fixture
 def trivy_json() -> str:
     return (FIXTURES_DIR / "trivy_output.json").read_text()
+
+
+@pytest.fixture
+def codeql_sarif() -> str:
+    return (FIXTURES_DIR / "codeql_output.sarif").read_text()

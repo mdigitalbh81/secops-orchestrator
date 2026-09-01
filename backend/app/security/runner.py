@@ -2,6 +2,7 @@
 
 All external tool invocations MUST go through this module.
 """
+
 from __future__ import annotations
 
 import asyncio

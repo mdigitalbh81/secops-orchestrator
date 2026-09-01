@@ -40,6 +40,10 @@ services:
       SECOPS_REDIS_URL: redis://redis:6379/0
       SECOPS_WORKSPACE_BASE: /tmp/secops-workspaces
       SECOPS_ALLOWED_WORKSPACE_ROOT: /tmp/secops-workspaces
+      AI_APPSEC_ENABLED: ${AI_APPSEC_ENABLED:-false}
+      AI_APPSEC_BASE_URL: ${AI_APPSEC_BASE_URL:-}
+      AI_APPSEC_API_KEY: ${AI_APPSEC_API_KEY:-}
+      AI_APPSEC_MODEL: ${AI_APPSEC_MODEL:-gpt-4o}
     ports:
       - "${SECOPS_API_PORT:-8008}:8000"
     healthcheck:
@@ -66,6 +70,10 @@ services:
       SECOPS_REDIS_URL: redis://redis:6379/0
       SECOPS_WORKSPACE_BASE: /tmp/secops-workspaces
       SECOPS_ALLOWED_WORKSPACE_ROOT: /tmp/secops-workspaces
+      AI_APPSEC_ENABLED: ${AI_APPSEC_ENABLED:-false}
+      AI_APPSEC_BASE_URL: ${AI_APPSEC_BASE_URL:-}
+      AI_APPSEC_API_KEY: ${AI_APPSEC_API_KEY:-}
+      AI_APPSEC_MODEL: ${AI_APPSEC_MODEL:-gpt-4o}
     depends_on:
       postgres:
         condition: service_healthy

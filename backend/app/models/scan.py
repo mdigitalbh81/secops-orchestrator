@@ -27,9 +27,7 @@ class Scan(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     project: Mapped[Project] = relationship("Project", back_populates="scans")
     scanner_runs: Mapped[list[ScannerRun]] = relationship(
@@ -38,8 +36,12 @@ class Scan(Base):
     findings: Mapped[list[Finding]] = relationship(
         "Finding", back_populates="scan", lazy="selectin"
     )
+    correlation_groups: Mapped[list[CorrelationGroup]] = relationship(
+        "CorrelationGroup", back_populates="scan", lazy="selectin"
+    )
 
 
+from app.models.correlation import CorrelationGroup  # noqa: E402, F401
 from app.models.finding import Finding  # noqa: E402, F401
 from app.models.project import Project  # noqa: E402, F401
 from app.models.scanner_run import ScannerRun  # noqa: E402, F401

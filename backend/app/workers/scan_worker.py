@@ -3,6 +3,7 @@
 Uses ARQ for job processing. Falls back to a simple background task
 if ARQ/Redis is not available (useful for testing).
 """
+
 from __future__ import annotations
 
 import asyncio

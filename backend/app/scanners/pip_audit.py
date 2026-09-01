@@ -29,10 +29,9 @@ class PipAuditScanner(ScannerAdapter):
         return result.return_code == 0
 
     def detect_applicability(self, project_path: Path) -> bool:
-        return (
-            (project_path / "requirements.txt").exists()
-            or (project_path / "pyproject.toml").exists()
-        )
+        return (project_path / "requirements.txt").exists() or (
+            project_path / "pyproject.toml"
+        ).exists()
 
     def build_command(self, project_path: Path) -> list[str]:
         if (project_path / "requirements.txt").exists():

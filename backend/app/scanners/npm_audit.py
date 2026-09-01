@@ -81,9 +81,7 @@ class NpmAuditScanner(ScannerAdapter):
             raw_fp = compute_fingerprint(
                 scanner=self.name, cve=cve, package_name=pkg_name, title=title
             )
-            norm_fp = compute_normalized_fingerprint(
-                cve=cve, package_name=pkg_name, title=title
-            )
+            norm_fp = compute_normalized_fingerprint(cve=cve, package_name=pkg_name, title=title)
 
             findings.append(
                 NormalizedFinding(

@@ -50,11 +50,13 @@ async def test_orchestrator_full_flow(
             return RunResult(return_code=0, stdout="{}", stderr="")
         return RunResult(return_code=-1, stdout="", stderr="Unknown tool")
 
-    with patch("app.scanners.base.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.semgrep.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.npm_audit.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.trivy.run_command", side_effect=mock_run_command):
+    with (
+        patch("app.scanners.base.run_command", side_effect=mock_run_command),
+        patch("app.scanners.semgrep.run_command", side_effect=mock_run_command),
+        patch("app.scanners.npm_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.trivy.run_command", side_effect=mock_run_command),
+    ):
         await run_scan(scan.id, db_session)
 
     # Verify scan completed
@@ -64,10 +66,10 @@ async def test_orchestrator_full_flow(
 
     # Verify scanner runs
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     statuses = {r.scanner_name: r.status for r in runs}
     assert statuses["semgrep"] == ScannerRunStatus.COMPLETED
     assert statuses["npm-audit"] == ScannerRunStatus.COMPLETED
@@ -76,10 +78,10 @@ async def test_orchestrator_full_flow(
 
     # Verify findings persisted
     findings = (
-        await db_session.execute(
-            select(Finding).where(Finding.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(Finding).where(Finding.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     assert len(findings) > 0
 
 
@@ -112,21 +114,23 @@ async def test_orchestrator_scanner_failure_does_not_break_scan(
             raise RuntimeError("NPM crashed unexpectedly")
         return RunResult(return_code=-1, stdout="", stderr="tool not found")
 
-    with patch("app.scanners.base.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.semgrep.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.npm_audit.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command), \
-         patch("app.scanners.trivy.run_command", side_effect=mock_run_command):
+    with (
+        patch("app.scanners.base.run_command", side_effect=mock_run_command),
+        patch("app.scanners.semgrep.run_command", side_effect=mock_run_command),
+        patch("app.scanners.npm_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.trivy.run_command", side_effect=mock_run_command),
+    ):
         await run_scan(scan.id, db_session)
 
     await db_session.refresh(scan)
     assert scan.status == ScanStatus.COMPLETED
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     statuses = {r.scanner_name: r.status for r in runs}
     assert statuses["semgrep"] == ScannerRunStatus.COMPLETED
     assert statuses["npm-audit"] == ScannerRunStatus.FAILED

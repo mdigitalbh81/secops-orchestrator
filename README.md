@@ -308,3 +308,15 @@ timeline
 - **Phase 2**: CodeQL integration, AppSec Review workflows, intelligent cross-scanner semantic correlation.
 - **Phase 3**: OWASP ZAP and Nuclei integration for DAST and staging deployment security orchestration.
 - **Phase 4**: Strix Pentx automated PoC validation, GitHub PR Integration & Security Gates, automated remediation PRs, React Web Dashboard.
+
+## License
+
+This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
+
+You may use, study, modify, and redistribute this software for noncommercial purposes.
+
+**Commercial use is not permitted without a separate commercial license from the copyright holder.**
+
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+> This project is source-available. The PolyForm Noncommercial License does not permit commercial use.

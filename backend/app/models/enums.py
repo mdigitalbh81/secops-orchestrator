@@ -34,6 +34,7 @@ class ScannerRunStatus(enum.StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
 
 
 class RiskGate(enum.StrEnum):

@@ -233,3 +233,50 @@ async def test_create_scan_path_traversal_rejected(client: AsyncClient) -> None:
         json={"project_id": project_id, "source_path": "/etc/shadow"},
     )
     assert response.status_code == 400
+
+
+async def test_partial_scanner_run_in_summary_and_runs_api(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tmp_path,
+):
+    project = Project(name="Partial Route Test")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(
+        project_id=project.id,
+        source_path=str(tmp_path),
+        status=ScanStatus.COMPLETED,
+        risk_gate=RiskGate.PASS,
+    )
+    db_session.add(scan)
+    await db_session.flush()
+
+    r1 = ScannerRun(
+        scan_id=scan.id,
+        scanner_name="npm-audit",
+        status=ScannerRunStatus.PARTIAL,
+        error_message="1 of 2 target(s) failed",
+    )
+    r2 = ScannerRun(
+        scan_id=scan.id,
+        scanner_name="semgrep",
+        status=ScannerRunStatus.COMPLETED,
+    )
+    db_session.add_all([r1, r2])
+    await db_session.commit()
+
+    # GET /api/scans/{scan.id}/scanner-runs
+    res_runs = await client.get(f"/api/scans/{scan.id}/scanner-runs")
+    assert res_runs.status_code == 200
+    runs = res_runs.json()
+    npm_run = next(r for r in runs if r["scanner_name"] == "npm-audit")
+    assert npm_run["status"] == "PARTIAL"
+
+    # GET /api/scans/{scan.id}/summary
+    res_sum = await client.get(f"/api/scans/{scan.id}/summary")
+    assert res_sum.status_code == 200
+    sum_data = res_sum.json()
+    assert sum_data["scanner_runs"]["npm-audit"] == "partial"
+    assert sum_data["scanner_runs"]["semgrep"] == "completed"

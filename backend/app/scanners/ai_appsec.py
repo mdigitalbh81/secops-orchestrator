@@ -22,7 +22,7 @@ from app.scanners.base import (
     compute_fingerprint,
     compute_normalized_fingerprint,
 )
-from app.security.runner import RunnerConfig, RunResult
+from app.security.runner import RunnerConfig, RunResult, redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -78,26 +78,6 @@ EXCLUDED_EXTENSIONS = {
     ".sqlite3",
     ".lock",
 }
-
-SECRET_PATTERNS = [
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(
-        r"-----BEGIN (?:[A-Z ]*?)PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]*?)PRIVATE KEY-----"
-    ),
-    re.compile(r"eyJ[A-Za-z0-9-_=]{10,}\.[A-Za-z0-9-_=]{10,}(?:\.[A-Za-z0-9-_.+/=]*)?"),
-    re.compile(
-        r"(?i)(api[_-]?key|secret|password|passwd|auth[_-]?token|bearer)\s*[:=]\s*['\"][a-zA-Z0-9_\-.~+/=]{8,}['\"]"
-    ),
-]
-
-
-def redact_secrets(text: str) -> str:
-    """Mask sensitive tokens, secrets, private keys, and passwords."""
-    redacted = text
-    for pattern in SECRET_PATTERNS:
-        redacted = pattern.sub("[REDACTED_SECRET]", redacted)
-    return redacted
-
 
 def is_excluded_file(file_path: Path, max_file_bytes: int) -> bool:
     """Check if file should be excluded from LLM payload for privacy or performance."""

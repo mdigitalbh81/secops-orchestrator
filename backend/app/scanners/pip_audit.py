@@ -29,9 +29,13 @@ class PipAuditScanner(ScannerAdapter):
         return result.return_code == 0
 
     def detect_applicability(self, project_path: Path) -> bool:
-        return (project_path / "requirements.txt").exists() or (
-            project_path / "pyproject.toml"
-        ).exists()
+        """True if any pip-audit scan target is discovered in project tree."""
+        from app.services.target_discovery import discover_scan_targets
+
+        return any(
+            t.scanner_name == self.name
+            for t in discover_scan_targets(project_path)
+        )
 
     def build_command(self, project_path: Path) -> list[str]:
         if (project_path / "requirements.txt").exists():

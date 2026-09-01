@@ -51,8 +51,8 @@ async def test_detect_applicable_scanners_unavailable(tmp_path: Path):
 
 
 async def test_detect_applicable_scanners_not_applicable(tmp_path: Path):
-    # Empty folder
-    trivy_scanner = TrivyScanner()
-    detection = await detect_applicable_scanners(tmp_path, [trivy_scanner])
-    assert detection["trivy"]["applicable"] is False
-    assert detection["trivy"]["available"] is False
+    # Empty folder - npm-audit should not be applicable (no package.json anywhere)
+    npm_scanner = NpmAuditScanner()
+    detection = await detect_applicable_scanners(tmp_path, [npm_scanner])
+    assert detection["npm-audit"]["applicable"] is False
+    assert detection["npm-audit"]["available"] is False

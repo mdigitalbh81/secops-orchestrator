@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +23,23 @@ class RunnerSecurityError(Exception):
 
 class RunnerTimeoutError(Exception):
     pass
+
+
+SECRET_PATTERNS = [
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"-----BEGIN (?:[A-Z ]*?)PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]*?)PRIVATE KEY-----"),
+    re.compile(r"eyJ[A-Za-z0-9-_=]{10,}\.[A-Za-z0-9-_=]{10,}(?:\.[A-Za-z0-9-_.+/=]*)?"),
+    re.compile(r"(?i)(?:api[_-]?key|secret|password|passwd|auth[_-]?token|bearer)\s*[:=]\s*['\"][a-zA-Z0-9_\-.~+/=]{8,}['\"]"),
+]
+
+
+def redact_secrets(text: str) -> str:
+    """Mask sensitive tokens, secrets, private keys, passwords."""
+    redacted = text
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("[REDACTED_SECRET]", redacted)
+    return redacted
+
 
 
 @dataclass

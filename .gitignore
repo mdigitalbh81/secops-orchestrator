@@ -11,3 +11,9 @@ strix_runs/
 .codeql-db-*/
 .idea/
 .vscode/
+
+# Python generated files
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/

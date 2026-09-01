@@ -73,8 +73,10 @@ services:
         condition: service_healthy
     volumes:
       - workspaces_data:/tmp/secops-workspaces
+      - trivy_cache:/home/secops/.cache/trivy
 
 volumes:
   postgres_data:
   redis_data:
   workspaces_data:
+  trivy_cache:

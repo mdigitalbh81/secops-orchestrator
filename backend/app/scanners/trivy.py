@@ -45,25 +45,33 @@ class TrivyScanner(ScannerAdapter):
             "fs",
             "--format",
             "json",
-            "--skip-update",
+            "--no-progress",
+            "--scanners",
+            "vuln",
             str(project_path),
         ]
 
     def parse_result(self, result: RunResult) -> list[dict]:
+        if result.return_code != 0 and not result.stdout.strip():
+            raise RuntimeError(
+                f"Trivy execution failed (code {result.return_code}): {result.stderr.strip()}"
+            )
         if not result.stdout.strip():
             return []
         try:
             data = json.loads(result.stdout)
-            findings: list[dict] = []
-            results = data.get("Results", [])
-            for r in results:
-                for vuln in r.get("Vulnerabilities", []):
-                    vuln["_target"] = r.get("Target", "")
-                    findings.append(vuln)
-            return findings
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse trivy JSON output")
-            return []
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Failed to parse trivy JSON output: {result.stderr.strip() or result.stdout[:200]}"
+            ) from exc
+
+        findings: list[dict] = []
+        results = data.get("Results", [])
+        for r in results:
+            for vuln in r.get("Vulnerabilities", []):
+                vuln["_target"] = r.get("Target", "")
+                findings.append(vuln)
+        return findings
 
     def normalize_findings(self, raw_findings: list[dict]) -> list[NormalizedFinding]:
         findings: list[NormalizedFinding] = []

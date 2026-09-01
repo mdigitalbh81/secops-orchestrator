@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.models.enums import Severity
 from app.scanners.trivy import TrivyScanner
 from app.security.runner import RunResult
@@ -15,7 +17,30 @@ def test_trivy_applicability(tmp_path: Path):
 def test_trivy_build_command(tmp_path: Path):
     scanner = TrivyScanner()
     cmd = scanner.build_command(tmp_path)
-    assert cmd == ["trivy", "fs", "--format", "json", "--skip-update", str(tmp_path)]
+    assert cmd == [
+        "trivy",
+        "fs",
+        "--format",
+        "json",
+        "--no-progress",
+        "--scanners",
+        "vuln",
+        str(tmp_path),
+    ]
+
+
+def test_trivy_parse_result_error_raises():
+    scanner = TrivyScanner()
+    result = RunResult(return_code=1, stdout="", stderr="DB error: failed to download DB")
+    with pytest.raises(RuntimeError, match="Trivy execution failed"):
+        scanner.parse_result(result)
+
+
+def test_trivy_parse_result_invalid_json_raises():
+    scanner = TrivyScanner()
+    result = RunResult(return_code=0, stdout="not valid json", stderr="some error")
+    with pytest.raises(RuntimeError, match="Failed to parse trivy JSON output"):
+        scanner.parse_result(result)
 
 
 def test_trivy_parse_and_normalize(trivy_json: str):

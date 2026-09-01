@@ -334,3 +334,15 @@ timeline
 - **Phase 2 (COMPLETE)**: CodeQL integration (SARIF 2.1.0, multi-language DBs), AI AppSec Reviewer (OpenAI-compatible abstraction, privacy controls, prompt injection defense), intelligent cross-scanner correlation engine, Evidence Levels (`SINGLE_SOURCE`, `CORROBORATED_STATIC`), Confidence Engine v2, database migration `002`, extended REST API endpoints (`/correlations`, `/evidence-summary`).
 - **Phase 3 (PLANNED)**: OWASP ZAP (DAST), Nuclei engine, staging deployment security orchestration, ephemeral scan environments.
 - **Phase 4 (PLANNED)**: Strix / Pentx automated PoC validation, GitHub PR Security Gates, automated remediation PRs, React Web Dashboard.
+
+## License
+
+This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
+
+You may use, study, modify, and redistribute this software for noncommercial purposes.
+
+**Commercial use is not permitted without a separate commercial license from the copyright holder.**
+
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
+> This project is source-available. The PolyForm Noncommercial License does not permit commercial use.

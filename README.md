@@ -4,34 +4,40 @@ SecOps Orchestrator is an extensible DevSecOps security orchestration platform t
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion["1. Ingestion Layer"]
-        API["FastAPI REST API"] -->|POST /api/scans| Q["Redis Job Queue (ARQ)"]
+    subgraph Ingestion ["1. Ingestion Layer"]
+        API["FastAPI REST API"] --> Q["Redis Job Queue (ARQ)"]
     end
 
-    subgraph Processing["2. Orchestration & Execution"]
+    subgraph Processing ["2. Orchestration and Execution"]
         Q --> Worker["Async Scan Worker"]
-        Worker --> SD["Stack Detector"]
-        SD -->|package.json| S_NPM["NpmAuditScanner"]
-        SD -->|requirements.txt / pyproject.toml| S_PIP["PipAuditScanner"]
-        SD -->|Dockerfile| S_TRIVY["TrivyScanner"]
-        SD -->|Source Code| S_SEMGREP["SemgrepScanner"]
-        
-        S_NPM --> Runner["Secure Subprocess Runner"]
+        Worker --> SD["Stack Detector and Target Discovery"]
+
+        SD --> S_SEMGREP["Semgrep (SAST)"]
+        SD --> S_CODEQL["CodeQL (Deep SAST)"]
+        SD --> S_NPM["npm audit (Node.js SCA)"]
+        SD --> S_PIP["pip-audit (Python SCA)"]
+        SD --> S_TRIVY["Trivy (Container and FS)"]
+        SD --> S_AI["AI AppSec Reviewer (LLM SAST)"]
+
+        S_SEMGREP --> Runner["Secure Subprocess Runner"]
+        S_CODEQL --> Runner
+        S_NPM --> Runner
         S_PIP --> Runner
         S_TRIVY --> Runner
-        S_SEMGREP --> Runner
+        S_AI --> Runner
     end
 
-    subgraph Normalization["3. Correlation & Risk Engine"]
+    subgraph Normalization ["3. Correlation and Risk Engine"]
         Runner --> Norm["Result Normalizer"]
         Norm --> Dedup["Cross-Scanner Deduplication"]
-        Dedup --> Conf["Confidence Adjuster"]
-        Conf --> Risk["Risk Gate Engine (PASS / REVIEW / BLOCKED)"]
+        Dedup --> Correlate["Intelligent Correlation Engine"]
+        Correlate --> Conf["Confidence Engine v2"]
+        Conf --> Risk["Risk Gate Engine (PASS, REVIEW, BLOCKED)"]
     end
 
-    subgraph Persistence["4. Storage & Reporting"]
-        Risk --> DB[(PostgreSQL)]
-        DB --> Report["GET /api/scans/{id}/summary"]
+    subgraph Persistence ["4. Storage and Reporting"]
+        Risk --> DB["PostgreSQL Database"]
+        DB --> Report["REST API Reporting"]
     end
 ```
 

@@ -1,0 +1,38 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/secops
+
+# Install system packages, nodejs/npm, and curl for tools installation
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    nodejs \
+    npm \
+    curl \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install scanner CLI tools (pip-audit, semgrep)
+RUN pip install --no-cache-dir pip-audit semgrep
+
+# Install Trivy binary and pre-download vulnerability DB
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
+    && mkdir -p /home/secops/.cache/trivy \
+    && trivy fs --download-db-only --cache-dir /home/secops/.cache/trivy
+
+WORKDIR /app
+
+RUN addgroup --system --gid 1000 secops \
+    && adduser --system --uid 1000 --ingroup secops --home /home/secops secops \
+    && mkdir -p /tmp/secops-workspaces \
+    && chown -R secops:secops /tmp/secops-workspaces \
+    && chown -R secops:secops /home/secops
+
+COPY backend/pyproject.toml /app/
+RUN pip install --no-cache-dir .
+
+COPY backend /app
+USER secops
+
+CMD ["python", "-m", "app.workers.scan_worker"]

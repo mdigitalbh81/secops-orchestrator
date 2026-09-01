@@ -1,0 +1,31 @@
+{
+  "dependencies": [
+    {
+      "name": "urllib3",
+      "version": "1.26.4",
+      "vulns": [
+        {
+          "id": "CVE-2021-33503",
+          "fix_versions": ["1.26.5"],
+          "description": "Catastrophic backtracking in URL authority parser."
+        }
+      ]
+    },
+    {
+      "name": "jinja2",
+      "version": "2.11.2",
+      "vulns": [
+        {
+          "id": "CVE-2020-28493",
+          "fix_versions": ["2.11.3"],
+          "description": "Cross-site scripting (XSS) vulnerability via invalid attr tag."
+        }
+      ]
+    },
+    {
+      "name": "safe-lib",
+      "version": "1.0.0",
+      "vulns": []
+    }
+  ]
+}

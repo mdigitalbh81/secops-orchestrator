@@ -1,0 +1,57 @@
+{
+  "version": "1.70.0",
+  "results": [
+    {
+      "check_id": "python.lang.security.deserialization.pickle.avoid-pickle",
+      "path": "app/utils.py",
+      "start": { "line": 42, "col": 12, "offset": 1240 },
+      "end": { "line": 42, "col": 30, "offset": 1258 },
+      "extra": {
+        "message": "Avoid using `pickle` for deserialization of untrusted data as it can lead to arbitrary code execution.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": [
+            "CWE-502: Deserialization of Untrusted Data"
+          ],
+          "owasp": [
+            "A08:2021 - Software and Data Integrity Failures"
+          ],
+          "source": "https://semgrep.dev/r/python.lang.security.deserialization.pickle.avoid-pickle"
+        }
+      }
+    },
+    {
+      "check_id": "python.flask.security.audit.hardcoded-config-secret.hardcoded-config-secret",
+      "path": "app/config.py",
+      "start": { "line": 15, "col": 5, "offset": 320 },
+      "end": { "line": 15, "col": 35, "offset": 350 },
+      "extra": {
+        "message": "Hardcoded secret key found in configuration.",
+        "severity": "WARNING",
+        "metadata": {
+          "cwe": [
+            "CWE-798: Use of Hard-coded Credentials"
+          ],
+          "source": "https://semgrep.dev/r/python.flask.security.audit.hardcoded-config-secret"
+        }
+      }
+    },
+    {
+      "check_id": "generic.comment.todo",
+      "path": "app/main.py",
+      "start": { "line": 88, "col": 1, "offset": 2100 },
+      "end": { "line": 88, "col": 20, "offset": 2119 },
+      "extra": {
+        "message": "Found TODO comment.",
+        "severity": "INFO",
+        "metadata": {
+          "source": "https://semgrep.dev/r/generic.comment.todo"
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "paths": { "scanned": 12, "skipped": 0 }
+  }
+}

@@ -297,6 +297,11 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
     # 3. Confidence scoring v2
     deduped = adjust_confidence(deduped)
 
+    # Synchronize correlation group confidence with adjusted findings
+    for cg in correlation_groups:
+        if cg.findings:
+            cg.confidence = max(cg.confidence, max(f.confidence for f in cg.findings))
+
     # 4. Risk gate evaluation
     risk_gate = compute_risk_gate(deduped)
 
@@ -342,15 +347,16 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
             session.add(finding)
             await session.flush()
 
-            if nf.raw_data:
+            evidences_to_save = nf.evidences or ([nf.raw_data] if nf.raw_data else [])
+            for ev_data in evidences_to_save:
                 evidence = FindingEvidence(
                     finding_id=finding.id,
                     scanner_name=nf.scanner_name,
-                    raw_data=nf.raw_data,
+                    raw_data=ev_data,
                 )
                 session.add(evidence)
 
-    scan.status = ScanStatus.COMPLETED
+        scan.status = ScanStatus.COMPLETED
     scan.risk_gate = risk_gate
     scan.completed_at = datetime.now(UTC)
     await session.commit()

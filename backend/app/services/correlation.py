@@ -79,6 +79,14 @@ def _paths_match(p1: str | None, p2: str | None) -> bool:
 
 def are_findings_correlated(f1: NormalizedFinding, f2: NormalizedFinding) -> bool:
     """Determine if two findings describe the same security issue."""
+    # 0. Exact normalized fingerprint match across scanners
+    if (
+        f1.normalized_fingerprint
+        and f2.normalized_fingerprint
+        and f1.normalized_fingerprint == f2.normalized_fingerprint
+    ):
+        return True
+
     # 1. Exact CVE match
     if f1.cve and f2.cve and f1.cve.strip().upper() == f2.cve.strip().upper():
         pkg1, pkg2 = _normalize_pkg(f1.package_name), _normalize_pkg(f2.package_name)
@@ -165,8 +173,7 @@ def correlate_findings(
 
         # Update finding evidence levels
         for f in group_findings:
-            if len(distinct_scanners) >= 2:
-                f.evidence_level = EvidenceLevel.CORROBORATED_STATIC
+            f.evidence_level = evidence_level
 
         # Determine group severity (highest among findings)
         group_severity = Severity.UNKNOWN

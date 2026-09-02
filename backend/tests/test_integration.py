@@ -124,7 +124,17 @@ async def test_full_integration_multi_stack_scan(
     findings = findings_res.json()
     assert len(findings) > 0
 
-    # Verify deduplication took place (lodash was reported by npm-audit and trivy)
     lodash_findings = [f for f in findings if f.get("package_name") == "lodash"]
-    assert len(lodash_findings) == 1
-    assert lodash_findings[0]["confidence"] >= 0.9
+    assert len(lodash_findings) == 2
+    lodash_scanners = {f["scanner_name"] for f in lodash_findings}
+    assert lodash_scanners == {"npm-audit", "trivy"}
+    lodash_corrs = [
+        c
+        for c in corrs
+        if any(f.get("package_name") == "lodash" for f in c.get("findings", []))
+        or "lodash" in c.get("canonical_title", "").lower()
+    ]
+    assert len(lodash_corrs) == 1
+    assert lodash_corrs[0]["evidence_level"] == "CORROBORATED_STATIC"
+    assert lodash_corrs[0]["confidence"] >= 0.85
+    assert len(lodash_corrs[0]["findings"]) == 2

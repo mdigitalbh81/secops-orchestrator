@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.models.enums import EvidenceLevel, Severity
@@ -39,6 +39,11 @@ class NormalizedFinding:
     raw_data: dict | None = None
     raw_fingerprint: str = ""
     normalized_fingerprint: str = ""
+    evidences: list[dict] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.evidences and self.raw_data is not None:
+            self.evidences = [self.raw_data]
 
 
 def compute_fingerprint(

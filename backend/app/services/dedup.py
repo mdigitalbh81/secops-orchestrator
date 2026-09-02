@@ -22,25 +22,17 @@ SEVERITY_RANKS = {
 def deduplicate_findings(
     findings: list[NormalizedFinding],
 ) -> list[NormalizedFinding]:
-    """Deduplicate findings by normalized_fingerprint.
-
-    When multiple scanners report the same exact finding (same normalized fingerprint),
-    keep the most detailed metadata, bump confidence, and mark evidence level as CORROBORATED_STATIC.
-    """
-    seen: dict[str, NormalizedFinding] = {}
+    seen: dict[tuple[str, str], NormalizedFinding] = {}
     for finding in findings:
-        fp = finding.normalized_fingerprint
-        if fp in seen:
-            existing = seen[fp]
-            # Bump confidence when corroborated
-            existing.confidence = round(min(1.0, existing.confidence + 0.2), 2)
-            existing.evidence_level = EvidenceLevel.CORROBORATED_STATIC
-
-            # Keep higher severity if current is higher
+        key = (finding.scanner_name, finding.normalized_fingerprint)
+        if key in seen:
+            existing = seen[key]
+            finding_evidences = finding.evidences or ([finding.raw_data] if finding.raw_data else [])
+            for ev in finding_evidences:
+                if ev not in existing.evidences:
+                    existing.evidences.append(ev)
             if SEVERITY_RANKS.get(finding.severity, 0) > SEVERITY_RANKS.get(existing.severity, 0):
                 existing.severity = finding.severity
-
-            # Keep more specific metadata if present
             if not existing.cwe and finding.cwe:
                 existing.cwe = finding.cwe
             if not existing.cve and finding.cve:
@@ -52,13 +44,21 @@ def deduplicate_findings(
             if existing.line_start is None and finding.line_start is not None:
                 existing.line_start = finding.line_start
                 existing.line_end = finding.line_end
+            if not existing.package_name and finding.package_name:
+                existing.package_name = finding.package_name
+            if not existing.installed_version and finding.installed_version:
+                existing.installed_version = finding.installed_version
+            if not existing.fixed_version and finding.fixed_version:
+                existing.fixed_version = finding.fixed_version
+            existing.confidence = max(existing.confidence, finding.confidence)
+            existing.evidence_level = EvidenceLevel.SINGLE_SOURCE
             logger.info(
-                "Dedup: corroborated %s with %s (fp=%s)",
+                "Dedup: consolidated same-scanner duplicate %s (fp=%s)",
                 existing.scanner_name,
-                finding.scanner_name,
-                fp[:12],
+                key[1][:12],
             )
         else:
-            seen[fp] = finding
-
+            if not finding.evidences and finding.raw_data:
+                finding.evidences = [finding.raw_data]
+            seen[key] = finding
     return list(seen.values())

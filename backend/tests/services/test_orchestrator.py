@@ -9,6 +9,7 @@ from unittest.mock import patch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.correlation import CorrelationGroup
 from app.models.enums import RiskGate, ScannerRunStatus, ScanStatus
 from app.models.finding import Finding, FindingEvidence
 from app.models.project import Project
@@ -540,3 +541,69 @@ async def test_raw_output_preservation_and_secret_redaction(
     assert "AKIAIOSFODNN7EXAMPLE" not in subtarget["stdout"]
     assert "[REDACTED_SECRET]" in subtarget["stderr"]
     assert "AKIAIOSFODNN7EXAMPLE" not in subtarget["stderr"]
+
+
+async def test_successful_scan_with_zero_findings_completes_with_pass(
+    db_session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    """Zero findings scan must complete with COMPLETED status and PASS risk gate."""
+    proj_dir = tmp_path / "clean_project"
+    proj_dir.mkdir()
+    (proj_dir / "package.json").write_text('{"name": "clean-app"}')
+
+    project = Project(name="Clean Project")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(project_id=project.id, source_path=str(proj_dir))
+    db_session.add(scan)
+    await db_session.commit()
+
+    async def mock_run_command(argv, cwd=None, config=None):
+        tool = argv[0]
+        if tool == "npm":
+            if "--version" in argv:
+                return RunResult(return_code=0, stdout="10.0.0", stderr="")
+            return RunResult(
+                return_code=0,
+                stdout=json.dumps({"vulnerabilities": {}}),
+                stderr="",
+            )
+        if "--version" in argv:
+            return RunResult(return_code=0, stdout="1.0.0", stderr="")
+        return RunResult(return_code=0, stdout="{}", stderr="")
+
+    with (
+        patch("app.scanners.base.run_command", side_effect=mock_run_command),
+        patch("app.scanners.semgrep.run_command", side_effect=mock_run_command),
+        patch("app.scanners.npm_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.trivy.run_command", side_effect=mock_run_command),
+    ):
+        await run_scan(scan.id, db_session)
+
+    await db_session.refresh(scan)
+    assert scan.status == ScanStatus.COMPLETED
+    assert scan.risk_gate == RiskGate.PASS
+    assert scan.completed_at is not None
+
+    findings = (
+        await db_session.execute(select(Finding).where(Finding.scan_id == scan.id))
+    ).scalars().all()
+    assert len(findings) == 0
+
+    groups = (
+        await db_session.execute(
+            select(CorrelationGroup).where(CorrelationGroup.scan_id == scan.id)
+        )
+    ).scalars().all()
+    assert len(groups) == 0
+
+    runs = (
+        await db_session.execute(
+            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
+        )
+    ).scalars().all()
+    statuses = {r.scanner_name: r.status for r in runs}
+    assert statuses.get("npm-audit") == ScannerRunStatus.COMPLETED

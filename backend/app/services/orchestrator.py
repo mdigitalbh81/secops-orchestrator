@@ -356,7 +356,7 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
                 )
                 session.add(evidence)
 
-        scan.status = ScanStatus.COMPLETED
+    scan.status = ScanStatus.COMPLETED
     scan.risk_gate = risk_gate
     scan.completed_at = datetime.now(UTC)
     await session.commit()

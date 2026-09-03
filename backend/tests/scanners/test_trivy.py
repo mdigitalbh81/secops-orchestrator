@@ -9,7 +9,8 @@ from app.security.runner import RunResult
 
 def test_trivy_applicability(tmp_path: Path):
     scanner = TrivyScanner()
-    assert not scanner.detect_applicability(tmp_path)
+    # Trivy fs scan applies to any valid project directory
+    assert scanner.detect_applicability(tmp_path)
     (tmp_path / "Dockerfile").write_text("FROM alpine")
     assert scanner.detect_applicability(tmp_path)
 

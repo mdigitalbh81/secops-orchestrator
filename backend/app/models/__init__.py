@@ -1,4 +1,6 @@
+from app.models.correlation import CorrelationGroup
 from app.models.enums import (
+    EvidenceLevel,
     FindingStatus,
     RiskGate,
     ScannerRunStatus,
@@ -16,9 +18,11 @@ __all__ = [
     "ScanStatus",
     "ScannerRunStatus",
     "RiskGate",
+    "EvidenceLevel",
     "Project",
     "Scan",
     "ScannerRun",
     "Finding",
     "FindingEvidence",
+    "CorrelationGroup",
 ]

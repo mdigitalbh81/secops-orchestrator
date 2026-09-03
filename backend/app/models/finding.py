@@ -8,7 +8,7 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import FindingStatus, Severity
+from app.models.enums import EvidenceLevel, FindingStatus, Severity
 
 
 class Finding(Base):
@@ -23,6 +23,12 @@ class Finding(Base):
         SAEnum(Severity, native_enum=False), default=Severity.UNKNOWN
     )
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    evidence_level: Mapped[EvidenceLevel] = mapped_column(
+        SAEnum(EvidenceLevel, native_enum=False), default=EvidenceLevel.SINGLE_SOURCE
+    )
+    correlation_group_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("correlation_groups.id"), nullable=True
+    )
     cwe: Mapped[str | None] = mapped_column(String(50), nullable=True)
     cve: Mapped[str | None] = mapped_column(String(50), nullable=True)
     file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -42,6 +48,9 @@ class Finding(Base):
     )
 
     scan: Mapped[Scan] = relationship("Scan", back_populates="findings")
+    correlation_group: Mapped[CorrelationGroup | None] = relationship(
+        "CorrelationGroup", back_populates="findings"
+    )
     evidences: Mapped[list[FindingEvidence]] = relationship(
         "FindingEvidence", back_populates="finding", lazy="selectin"
     )
@@ -61,4 +70,5 @@ class FindingEvidence(Base):
     finding: Mapped[Finding] = relationship("Finding", back_populates="evidences")
 
 
+from app.models.correlation import CorrelationGroup  # noqa: E402, F401
 from app.models.scan import Scan  # noqa: E402, F401

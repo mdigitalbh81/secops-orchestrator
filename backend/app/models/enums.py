@@ -34,9 +34,16 @@ class ScannerRunStatus(enum.StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
 
 
 class RiskGate(enum.StrEnum):
     PASS = "PASS"
     REVIEW = "REVIEW"
     BLOCKED = "BLOCKED"
+
+
+class EvidenceLevel(enum.StrEnum):
+    SINGLE_SOURCE = "SINGLE_SOURCE"
+    CORROBORATED_STATIC = "CORROBORATED_STATIC"
+    RUNTIME_VALIDATED = "RUNTIME_VALIDATED"

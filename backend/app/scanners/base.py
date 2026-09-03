@@ -1,18 +1,19 @@
 """Base scanner adapter interface.
 
 Every scanner adapter must subclass ScannerAdapter and implement all abstract methods.
-The orchestrator interacts only through this interface -- scanner-specific details
-are confined to each adapter module.
+The orchestrator interacts only through this interface and scanner-specific
+details are confined to each adapter module.
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.models.enums import Severity
+from app.models.enums import EvidenceLevel, Severity
 from app.security.runner import RunnerConfig, RunResult, run_command
 
 logger = logging.getLogger(__name__)
@@ -34,13 +35,18 @@ class NormalizedFinding:
     installed_version: str | None = None
     fixed_version: str | None = None
     url: str | None = None
+    evidence_level: EvidenceLevel = EvidenceLevel.SINGLE_SOURCE
     raw_data: dict | None = None
     raw_fingerprint: str = ""
     normalized_fingerprint: str = ""
+    evidences: list[dict] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.evidences and self.raw_data is not None:
+            self.evidences = [self.raw_data]
 
 
 def compute_fingerprint(
-    *,
     scanner: str,
     cve: str | None = None,
     cwe: str | None = None,
@@ -67,7 +73,6 @@ def compute_fingerprint(
 
 
 def compute_normalized_fingerprint(
-    *,
     cve: str | None = None,
     cwe: str | None = None,
     package_name: str | None = None,
@@ -113,18 +118,18 @@ class ScannerAdapter(ABC):
 
     @abstractmethod
     async def is_available(self) -> bool:
-        """Check if the scanner binary/tool is installed and callable."""
+        """Check if scanner binary/tool is installed and callable."""
 
     @abstractmethod
     def detect_applicability(self, project_path: Path) -> bool:
-        """Return True if this scanner applies to the given project."""
+        """Return True if scanner applies to the given project."""
 
     @abstractmethod
     def build_command(self, project_path: Path) -> list[str]:
-        """Return the argv list to execute the scanner."""
+        """Return argv list to execute scanner."""
 
     async def execute(self, project_path: Path, config: RunnerConfig | None = None) -> RunResult:
-        """Run the scanner through the secure runner."""
+        """Run scanner through secure runner."""
         argv = self.build_command(project_path)
         return await run_command(argv, cwd=project_path, config=config)
 

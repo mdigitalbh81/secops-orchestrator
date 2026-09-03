@@ -1,6 +1,6 @@
 # SecOps Orchestrator
 
-SecOps Orchestrator is an extensible DevSecOps security orchestration platform that automates multi-scanner vulnerability analysis, normalizes findings into a unified schema, performs cross-scanner deduplication and confidence scoring, and evaluates automated risk gates.
+SecOps Orchestrator is an extensible DevSecOps security orchestration platform that automates multi-scanner vulnerability analysis, normalizes findings into a unified schema, performs same-scanner deduplication, cross-scanner correlation, confidence scoring, and evaluates automated risk gates.
 
 ```mermaid
 flowchart TD
@@ -24,12 +24,12 @@ flowchart TD
         S_NPM --> Runner
         S_PIP --> Runner
         S_TRIVY --> Runner
-        S_AI --> Runner
     end
 
     subgraph Normalization ["3. Correlation and Risk Engine"]
         Runner --> Norm["Result Normalizer"]
-        Norm --> Dedup["Cross-Scanner Deduplication"]
+        S_AI --> Norm
+        Norm --> Dedup["Same-Scanner Deduplication"]
         Dedup --> Correlate["Intelligent Correlation Engine"]
         Correlate --> Conf["Confidence Engine v2"]
         Conf --> Risk["Risk Gate Engine (PASS, REVIEW, BLOCKED)"]
@@ -49,17 +49,20 @@ flowchart TD
 - **Scanner Abstraction Layer (`ScannerAdapter`)**: Clean pluggable interface isolating scanner-specific logic.
 - **Robust Failure Isolation**: Unavailable scanner binaries or failed executions report their run status without crashing the overall scan.
 - **Secure Subprocess Execution**: Strict command sanitization, absolute path validation, symlink traversal prevention, execution timeouts, and memory-safe output limits.
-- **Deterministic Deduplication**: Cross-scanner finding correlation using standardized vulnerability fingerprints (CVE, CWE, affected package/file).
+- **Same-Scanner Deduplication**: Deterministic removal of redundant findings from the same scanner using standardized vulnerability fingerprints.
+- **Intelligent Cross-Scanner Correlation**: Semantic clustering of related findings across distinct scanners based on common identifiers (CVE, CWE), package names, and source location proximity.
 - **Confidence Scoring & Corroboration**: Evidence-weighted scoring (0.0–1.0) with corroboration bonuses when multiple scanners confirm a finding.
 - **Risk Gate Engine**: Automated policy decisions (`PASS`, `REVIEW`, `BLOCKED`) based on vulnerability severity and confidence thresholds.
 - **Asynchronous Architecture**: Non-blocking REST API backed by Redis and background workers.
 
 ---
 
-## Supported Scanners (Phase 1)
+## Supported Scanners (Phase 1 & Phase 2)
 
 | Scanner | Target | Detection Trigger | Default Confidence |
 | :--- | :--- | :--- | :--- |
+| **CodeQL** | Deep SAST (Dataflow / Taint) | Python (`.py`), JS/TS (`.js`, `.ts`, `package.json`) | 0.70 |
+| **AI AppSec Reviewer** | LLM Heuristic SAST / Logic | When configured (`AI_APPSEC_ENABLED=true`) | 0.45 |
 | **Semgrep** | SAST (Source code) | Any source code repository | 0.5 |
 | **npm audit** | SCA (Node.js dependencies) | `package.json` | 0.7 (with CVE) / 0.5 |
 | **pip-audit** | SCA (Python dependencies) | `requirements.txt` or `pyproject.toml` | 0.7 (with CVE) / 0.5 |
@@ -74,6 +77,8 @@ erDiagram
     Project ||--o{ Scan : has
     Scan ||--o{ ScannerRun : executes
     Scan ||--o{ Finding : contains
+    Scan ||--o{ CorrelationGroup : clusters
+    CorrelationGroup ||--o{ Finding : links
     Finding ||--o{ FindingEvidence : references
 
     Project {
@@ -96,11 +101,25 @@ erDiagram
         datetime completed_at
     }
 
+    CorrelationGroup {
+        string id PK
+        string scan_id FK
+        string canonical_title
+        string canonical_cwe
+        string canonical_cve
+        string severity "CRITICAL | HIGH | MEDIUM | LOW | INFO | UNKNOWN"
+        float confidence "0.0 - 1.0"
+        string evidence_level "SINGLE_SOURCE | CORROBORATED_STATIC | RUNTIME_VALIDATED"
+        string status "OPEN | ACCEPTED_RISK | FALSE_POSITIVE | FIXED"
+        string remediation_recommendation
+        datetime created_at
+    }
+
     ScannerRun {
         string id PK
         string scan_id FK
         string scanner_name
-        string status "APPLICABLE | NOT_APPLICABLE | AVAILABLE | UNAVAILABLE | RUNNING | COMPLETED | FAILED"
+        string status "APPLICABLE | NOT_APPLICABLE | AVAILABLE | UNAVAILABLE | RUNNING | COMPLETED | FAILED | PARTIAL"
         string error_message
         float duration_seconds
         string raw_output
@@ -111,11 +130,13 @@ erDiagram
     Finding {
         string id PK
         string scan_id FK
+        string correlation_group_id FK
         string scanner_name
         string title
         string description
         string severity "CRITICAL | HIGH | MEDIUM | LOW | INFO | UNKNOWN"
         float confidence "0.0 - 1.0"
+        string evidence_level "SINGLE_SOURCE | CORROBORATED_STATIC | RUNTIME_VALIDATED"
         string cwe
         string cve
         string file_path
@@ -229,8 +250,8 @@ docker compose up -d --build
 ```
 
 Services exposed:
-- **API**: [http://localhost:8000](http://localhost:8000)
-- **API Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **API**: [http://localhost:8008](http://localhost:8008)
+- **API Docs (Swagger)**: [http://localhost:8008/docs](http://localhost:8008/docs)
 - **PostgreSQL**: `localhost:5432`
 - **Redis**: `localhost:6379`
 
@@ -269,9 +290,15 @@ ruff check .
 - `GET /api/scans/{scan_id}/scanner-runs`
   - **Response**: `200 OK` (List of scanner executions and individual statuses)
 - `GET /api/scans/{scan_id}/findings`
-  - **Response**: `200 OK` (List of normalized, deduplicated findings)
+- **Response**: `200 OK` (List of normalized, deduplicated findings)
+- `GET /api/scans/{scan_id}/correlations`
+- **Response**: `200 OK` (List of grouped correlation findings, evidence levels, and consolidated remediations)
+- `GET /api/scans/{scan_id}/correlations/{correlation_id}`
+- **Response**: `200 OK` (Details for a single correlation group)
+- `GET /api/scans/{scan_id}/evidence-summary`
+- **Response**: `200 OK` (Breakdown of findings by evidence level: SINGLE_SOURCE, CORROBORATED_STATIC, RUNTIME_VALIDATED)
 - `GET /api/scans/{scan_id}/summary`
-  - **Response**: `200 OK` (Summary with severity totals, scanner statuses, and risk gate decision)
+- **Response**: `200 OK` (Summary with severity totals, scanner statuses, and risk gate decision)
 
 #### Example Summary Response:
 
@@ -304,16 +331,16 @@ ruff check .
 ```mermaid
 timeline
     title SecOps Orchestrator Roadmap
-    Phase 1 (MVP) : Semgrep : npm audit : pip-audit : Trivy : Normalization : Deduplication : Risk Engine
-    Phase 2 : CodeQL Integration : AppSec Review : Intelligent Finding Correlation : Custom Risk Policies
+    Phase 1 (COMPLETE) : Semgrep : npm audit : pip-audit : Trivy : Normalization : Deduplication : Risk Engine
+    Phase 2 (COMPLETE) : CodeQL : AI AppSec Reviewer : Intelligent Correlation : Evidence Levels : Confidence v2
     Phase 3 : OWASP ZAP (DAST) : Nuclei Engine : Staging Orchestration : Ephemeral Scan Environments
     Phase 4 : Strix Pentx Validation : GitHub PR Security Gates : Automated Fix Suggestions : React Dashboard
 ```
 
-- **Phase 1 (Current MVP)**: Semgrep, npm audit, pip-audit, Trivy, normalization, deduplication, confidence scoring, Risk Engine, FastAPI, PostgreSQL, Redis, Docker Compose.
-- **Phase 2**: CodeQL integration, AppSec Review workflows, intelligent cross-scanner semantic correlation.
-- **Phase 3**: OWASP ZAP and Nuclei integration for DAST and staging deployment security orchestration.
-- **Phase 4**: Strix Pentx automated PoC validation, GitHub PR Integration & Security Gates, automated remediation PRs, React Web Dashboard.
+- **Phase 1 (COMPLETE)**: Semgrep, npm audit, pip-audit, Trivy, normalization, deterministic same-scanner deduplication, Risk Engine, FastAPI, PostgreSQL, Redis, Docker Compose.
+- **Phase 2 (COMPLETE)**: CodeQL integration (SARIF 2.1.0, multi-language DBs), AI AppSec Reviewer (OpenAI-compatible abstraction, privacy controls, prompt injection defense), intelligent cross-scanner correlation engine, Evidence Levels (`SINGLE_SOURCE`, `CORROBORATED_STATIC`), Confidence Engine v2, database migration `002`, extended REST API endpoints (`/correlations`, `/evidence-summary`).
+- **Phase 3 (PLANNED)**: OWASP ZAP (DAST), Nuclei engine, staging deployment security orchestration, ephemeral scan environments.
+- **Phase 4 (PLANNED)**: Strix / Pentx automated PoC validation, GitHub PR Security Gates, automated remediation PRs, React Web Dashboard.
 
 ## License
 

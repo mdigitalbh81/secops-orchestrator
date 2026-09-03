@@ -1,0 +1,104 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "version": "2.19.0",
+          "rules": [
+            {
+              "id": "py/sql-injection",
+              "name": "py/sql-injection",
+              "shortDescription": {
+                "text": "SQL query built from user-controlled sources"
+              },
+              "fullDescription": {
+                "text": "Building a SQL query through string concatenation allows an attacker to manipulate the query."
+              },
+              "properties": {
+                "problem.severity": "error",
+                "security-severity": "8.5",
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-089"
+                ]
+              },
+              "helpUri": "https://codeql.github.com/codeql-query-help/python/py-sql-injection/"
+            },
+            {
+              "id": "py/command-line-injection",
+              "name": "py/command-line-injection",
+              "shortDescription": {
+                "text": "Uncontrolled command line"
+              },
+              "fullDescription": {
+                "text": "Using externally controlled strings in a command line executed by the operating system."
+              },
+              "properties": {
+                "problem.severity": "error",
+                "security-severity": "9.8",
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-078"
+                ]
+              },
+              "helpUri": "https://codeql.github.com/codeql-query-help/python/py-command-line-injection/"
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "py/sql-injection",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "This SQL query depends on a user-provided value."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/db/user_repo.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 25,
+                  "startColumn": 9,
+                  "endLine": 25,
+                  "endColumn": 50
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "py/command-line-injection",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "This command line depends on a user-provided value."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/utils/exec.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 5,
+                  "endLine": 42,
+                  "endColumn": 30
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

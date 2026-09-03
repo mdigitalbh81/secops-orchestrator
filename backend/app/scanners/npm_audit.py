@@ -37,7 +37,13 @@ class NpmAuditScanner(ScannerAdapter):
         return result.return_code == 0
 
     def detect_applicability(self, project_path: Path) -> bool:
-        return (project_path / "package.json").exists()
+        """True if any npm-audit scan target is discovered in project tree."""
+        from app.services.target_discovery import discover_scan_targets
+
+        return any(
+            t.scanner_name == self.name
+            for t in discover_scan_targets(project_path)
+        )
 
     def build_command(self, project_path: Path) -> list[str]:
         return ["npm", "audit", "--json"]
@@ -81,9 +87,7 @@ class NpmAuditScanner(ScannerAdapter):
             raw_fp = compute_fingerprint(
                 scanner=self.name, cve=cve, package_name=pkg_name, title=title
             )
-            norm_fp = compute_normalized_fingerprint(
-                cve=cve, package_name=pkg_name, title=title
-            )
+            norm_fp = compute_normalized_fingerprint(cve=cve, package_name=pkg_name, title=title)
 
             findings.append(
                 NormalizedFinding(

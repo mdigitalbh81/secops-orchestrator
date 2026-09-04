@@ -16,6 +16,8 @@ BASE_SCANNER_CONFIDENCE = {
     "pip-audit": 0.70,
     "trivy": 0.70,
     "ai-appsec": 0.45,
+    "zap": 0.65,
+    "nuclei": 0.75,
 }
 
 
@@ -25,11 +27,22 @@ def adjust_confidence(findings: list[NormalizedFinding]) -> list[NormalizedFindi
     Rules:
     - CVE-based finding: +0.20 boost
     - Corroborated static finding: +0.20 boost (if not already boosted)
+    - Runtime-validated finding promoted via cross-scanner correlation: +0.20 boost
     - Cap at 1.0
     """
     for f in findings:
         boost = 0.0
         if f.cve or f.evidence_level == EvidenceLevel.CORROBORATED_STATIC:
+            boost += 0.20
+        elif f.evidence_level == EvidenceLevel.RUNTIME_VALIDATED and f.scanner_name in (
+            "semgrep",
+            "codeql",
+            "trivy",
+            "npm-audit",
+            "pip-audit",
+            "ai-appsec",
+        ):
+            # Static finding promoted by runtime validation
             boost += 0.20
 
         f.confidence = round(min(1.0, f.confidence + boost), 2)
@@ -46,7 +59,7 @@ def compute_group_confidence(findings: list[NormalizedFinding]) -> float:
 
     if len(distinct_scanners) >= 3:
         bonus = 0.30
-    elif len(distinct_scanners) == 2:
+    elif len(distinct_scanners) >= 2:
         bonus = 0.20
     else:
         bonus = 0.0

@@ -1,3 +1,5 @@
+"""Semgrep scanner adapter."""
+
 from __future__ import annotations
 
 import json
@@ -34,19 +36,12 @@ class SemgrepScanner(ScannerAdapter):
         )
         return result.return_code == 0
 
-    def detect_applicability(self, project_path: Path) -> bool:
-        # Semgrep can scan any code
+    def detect_applicability(self, project_path: Path, target_url: str | None = None) -> bool:
+        # Semgrep can scan any source code directory
         return True
 
-    def build_command(self, project_path: Path) -> list[str]:
-        return [
-            "semgrep",
-            "scan",
-            "--json",
-            "--config",
-            "auto",
-            str(project_path),
-        ]
+    def build_command(self, project_path: Path, target_url: str | None = None) -> list[str]:
+        return ["semgrep", "scan", "--json", "--config", "auto", str(project_path)]
 
     def parse_result(self, result: RunResult) -> list[dict]:
         if not result.stdout.strip():
@@ -65,14 +60,13 @@ class SemgrepScanner(ScannerAdapter):
             message = item.get("extra", {}).get("message", "")
             sev_str = item.get("extra", {}).get("severity", "INFO")
             severity = SEVERITY_MAP.get(sev_str, Severity.UNKNOWN)
-
             file_path = item.get("path", "")
             line_start = item.get("start", {}).get("line")
             line_end = item.get("end", {}).get("line")
 
             cwe_list = item.get("extra", {}).get("metadata", {}).get("cwe", [])
             cwe = cwe_list[0] if isinstance(cwe_list, list) and cwe_list else None
-            if isinstance(cwe, str) and ": " in cwe:
+            if isinstance(cwe, str) and ":" in cwe:
                 cwe = cwe.split(":")[0].strip()
 
             raw_fp = compute_fingerprint(

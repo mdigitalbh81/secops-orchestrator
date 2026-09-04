@@ -11,6 +11,8 @@ from app.workers.scan_worker import WorkerSettings, enqueue_scan, process_scan_j
 def test_worker_settings_configure():
     WorkerSettings.configure()
     assert WorkerSettings.redis_settings is not None
+    assert WorkerSettings.max_jobs >= 1
+    assert WorkerSettings.retry_jobs is False
 
 
 async def test_process_scan_job(db_session: AsyncSession, tmp_path: Path):

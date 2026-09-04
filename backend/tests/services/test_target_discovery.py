@@ -301,8 +301,12 @@ def test_applicability_single_source_consistency(tmp_path: Path):
     empty = tmp_path / "empty"
     empty.mkdir()
     targets = discover_scan_targets(empty)
-    assert npm_scanner.detect_applicability(empty) == any(t.scanner_name == "npm-audit" for t in targets)
-    assert pip_scanner.detect_applicability(empty) == any(t.scanner_name == "pip-audit" for t in targets)
+    assert npm_scanner.detect_applicability(empty) == any(
+        t.scanner_name == "npm-audit" for t in targets
+    )
+    assert pip_scanner.detect_applicability(empty) == any(
+        t.scanner_name == "pip-audit" for t in targets
+    )
     assert not npm_scanner.detect_applicability(empty)
     assert not pip_scanner.detect_applicability(empty)
 
@@ -312,8 +316,12 @@ def test_applicability_single_source_consistency(tmp_path: Path):
     (nested_npm / "sub").mkdir()
     (nested_npm / "sub" / "package.json").write_text("{}")
     targets = discover_scan_targets(nested_npm)
-    assert npm_scanner.detect_applicability(nested_npm) == any(t.scanner_name == "npm-audit" for t in targets)
-    assert pip_scanner.detect_applicability(nested_npm) == any(t.scanner_name == "pip-audit" for t in targets)
+    assert npm_scanner.detect_applicability(nested_npm) == any(
+        t.scanner_name == "npm-audit" for t in targets
+    )
+    assert pip_scanner.detect_applicability(nested_npm) == any(
+        t.scanner_name == "pip-audit" for t in targets
+    )
     assert npm_scanner.detect_applicability(nested_npm) is True
     assert pip_scanner.detect_applicability(nested_npm) is False
 
@@ -323,7 +331,11 @@ def test_applicability_single_source_consistency(tmp_path: Path):
     (nested_pip / "pkg").mkdir()
     (nested_pip / "pkg" / "requirements.txt").write_text("flask")
     targets = discover_scan_targets(nested_pip)
-    assert npm_scanner.detect_applicability(nested_pip) == any(t.scanner_name == "npm-audit" for t in targets)
-    assert pip_scanner.detect_applicability(nested_pip) == any(t.scanner_name == "pip-audit" for t in targets)
+    assert npm_scanner.detect_applicability(nested_pip) == any(
+        t.scanner_name == "npm-audit" for t in targets
+    )
+    assert pip_scanner.detect_applicability(nested_pip) == any(
+        t.scanner_name == "pip-audit" for t in targets
+    )
     assert npm_scanner.detect_applicability(nested_pip) is False
     assert pip_scanner.detect_applicability(nested_pip) is True

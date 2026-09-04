@@ -4,6 +4,7 @@ Walks the workspace directory to find manifests (package.json, requirements.txt,
 pyproject.toml, Dockerfile, etc.) and produces a list of ScanTarget objects that
 tell each scanner *where* and *what* to scan.
 """
+
 from __future__ import annotations
 
 import logging
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Directories that must never be traversed during discovery.
 IGNORED_DIRS: frozenset[str] = frozenset(
-    {
+    (
         ".git",
         "node_modules",
         ".venv",
@@ -29,7 +30,7 @@ IGNORED_DIRS: frozenset[str] = frozenset(
         ".tox",
         ".mypy_cache",
         "trivy_cache",
-    }
+    )
 )
 
 # Safety limits to avoid resource exhaustion on huge repos.
@@ -43,7 +44,7 @@ class ScanTarget:
 
     path: Path  # directory to use as cwd / scan root
     scanner_name: str
-    target_type: str  # e.g. "repository", "npm-subproject", "pip-subproject"
+    target_type: str  # e.g. "repository", "npm-subproject", "pip-subproject", "dast-url"
     manifest_path: Path | None = None  # relative to workspace root
     language: str | None = None
     metadata: dict = field(default_factory=dict)
@@ -62,10 +63,9 @@ def _is_safe_path(candidate: Path, workspace_root: Path) -> bool:
 def _walk_safe(
     root: Path,
     workspace_root: Path,
-    *,
     current_depth: int = 0,
 ) -> list[Path]:
-    """Return file paths under *root*, respecting IGNORED_DIRS, depth, and symlink safety."""
+    """Return all file paths under *root*, respecting IGNORED_DIRS, depth, and symlink safety."""
     if current_depth > MAX_DEPTH:
         return []
     if not _is_safe_path(root, workspace_root):
@@ -85,18 +85,20 @@ def _walk_safe(
         if entry.is_file():
             results.append(entry)
         elif entry.is_dir():
-            results.extend(
-                _walk_safe(entry, workspace_root, current_depth=current_depth + 1)
-            )
+            results.extend(_walk_safe(entry, workspace_root, current_depth=current_depth + 1))
+
     return results
 
 
-def discover_scan_targets(workspace_root: Path) -> list[ScanTarget]:
+def discover_scan_targets(
+    workspace_root: Path,
+    target_url: str | None = None,
+) -> list[ScanTarget]:
     """Discover all scan targets inside *workspace_root*.
 
     Returns targets for every scanner that needs per-subproject handling
-    (npm-audit, pip-audit) plus repository-level targets for scanners that
-    always operate at the root (semgrep, codeql, trivy, ai-appsec).
+    (npm-audit, pip-audit), plus repository-level targets for scanners that operate
+    on the root (semgrep, codeql, trivy, ai-appsec), and DAST targets when target_url is provided.
     """
     workspace_root = workspace_root.resolve()
     files = _walk_safe(workspace_root, workspace_root)
@@ -106,7 +108,9 @@ def discover_scan_targets(workspace_root: Path) -> list[ScanTarget]:
     # --- npm-audit: one target per package.json --------------------------
     npm_count = 0
     for f in files:
-        if f.name == "package.json" and npm_count < MAX_TARGETS_PER_MANIFEST:
+        if f.name == "package.json":
+            if npm_count >= MAX_TARGETS_PER_MANIFEST:
+                break
             targets.append(
                 ScanTarget(
                     path=f.parent,
@@ -120,7 +124,9 @@ def discover_scan_targets(workspace_root: Path) -> list[ScanTarget]:
     # --- pip-audit: one target per requirements.txt / pyproject.toml -----
     pip_count = 0
     for f in files:
-        if f.name in ("requirements.txt", "pyproject.toml") and pip_count < MAX_TARGETS_PER_MANIFEST:
+        if f.name in ("requirements.txt", "pyproject.toml"):
+            if pip_count >= MAX_TARGETS_PER_MANIFEST:
+                break
             targets.append(
                 ScanTarget(
                     path=f.parent,
@@ -131,7 +137,7 @@ def discover_scan_targets(workspace_root: Path) -> list[ScanTarget]:
             )
             pip_count += 1
 
-    # --- Repository-level scanners ---------------------------------------
+    # --- Repository-level static scanners --------------------------------
     for scanner_name, target_type in (
         ("semgrep", "repository"),
         ("codeql", "repository"),
@@ -145,5 +151,17 @@ def discover_scan_targets(workspace_root: Path) -> list[ScanTarget]:
                 target_type=target_type,
             )
         )
+
+    # --- DAST runtime scanners (when target_url is provided) --------------
+    if target_url and target_url.strip():
+        for scanner_name in ("zap", "nuclei"):
+            targets.append(
+                ScanTarget(
+                    path=workspace_root,
+                    scanner_name=scanner_name,
+                    target_type="dast-url",
+                    metadata={"target_url": target_url.strip()},
+                )
+            )
 
     return targets

@@ -1,3 +1,5 @@
+"""Application configuration via pydantic-settings."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,18 +36,51 @@ class Settings(BaseSettings):
     allowed_workspace_root: Path = Path("/tmp/secops-workspaces")
     max_workspace_size_mb: int = 500
 
-    # AI AppSec Reviewer
+    # Worker / Scanner Resource Management
+    worker_max_jobs: int = Field(default=1, validation_alias="SECOPS_WORKER_MAX_JOBS")
+    codeql_threads: int = Field(default=0, validation_alias="SECOPS_CODEQL_THREADS")
+    codeql_ram_mb: int | None = Field(default=None, validation_alias="SECOPS_CODEQL_RAM_MB")
+
+    # DAST Configuration
+    dast_allowed_hosts: str = Field(
+        default="localhost,127.0.0.1,api,staging-app,app,web,testserver,test-app,*.internal,*.local,*.test",
+        validation_alias="SECOPS_DAST_ALLOWED_HOSTS",
+    )
+    dast_enforce_host_allowlist: bool = Field(
+        default=True,
+        validation_alias="SECOPS_DAST_ENFORCE_HOST_ALLOWLIST",
+    )
+    zap_path: str = Field(
+        default="zap-baseline.py",
+        validation_alias="SECOPS_ZAP_PATH",
+    )
+    zap_url: str = Field(
+        default="http://zap:8080",
+        validation_alias="SECOPS_ZAP_URL",
+    )
+    nuclei_path: str = Field(
+        default="nuclei",
+        validation_alias="SECOPS_NUCLEI_PATH",
+    )
+
+    # AppSec Reviewer
     ai_appsec_enabled: bool = Field(default=False, validation_alias="AI_APPSEC_ENABLED")
     ai_appsec_base_url: str | None = Field(default=None, validation_alias="AI_APPSEC_BASE_URL")
     ai_appsec_api_key: str | None = Field(default=None, validation_alias="AI_APPSEC_API_KEY")
     ai_appsec_model: str = Field(default="gpt-4o", validation_alias="AI_APPSEC_MODEL")
     ai_appsec_timeout_seconds: int = Field(default=60, validation_alias="AI_APPSEC_TIMEOUT_SECONDS")
     ai_appsec_max_file_bytes: int = Field(
-        default=50 * 1024, validation_alias="AI_APPSEC_MAX_FILE_BYTES"
+        default=50 * 1024,
+        validation_alias="AI_APPSEC_MAX_FILE_BYTES",
     )
     ai_appsec_max_total_bytes: int = Field(
-        default=500 * 1024, validation_alias="AI_APPSEC_MAX_TOTAL_BYTES"
+        default=500 * 1024,
+        validation_alias="AI_APPSEC_MAX_TOTAL_BYTES",
     )
+
+    def get_dast_allowed_hosts(self) -> list[str]:
+        """Return list of allowed hosts for DAST scanning."""
+        return [h.strip() for h in self.dast_allowed_hosts.split(",") if h.strip()]
 
 
 _settings: Settings | None = None

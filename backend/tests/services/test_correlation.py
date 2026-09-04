@@ -161,8 +161,8 @@ def test_no_over_dedup_far_lines():
         confidence=0.70,
         scanner_name="codeql",
         cwe="CWE-79",
-    file_path="app/templates/render.py",
-    line_start=150,
+        file_path="app/templates/render.py",
+        line_start=150,
     )
     groups = correlate_findings([f1, f2], scan_id="scan-far")
     assert len(groups) == 2

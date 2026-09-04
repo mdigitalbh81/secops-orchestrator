@@ -1,7 +1,7 @@
 """Async worker for processing scans.
 
-Uses ARQ for job processing. Falls back to a simple background task
-if ARQ/Redis is not available (useful for testing).
+Uses ARQ for background job processing.
+Falls back to a simple background task if ARQ/Redis is not available (useful for testing).
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.config import get_settings
 from app.services.orchestrator import run_scan
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -22,8 +23,10 @@ async def process_scan_job(ctx: dict, scan_id: str) -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url, echo=settings.debug)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+
     async with factory() as session:
         await run_scan(scan_id, session)
+
     await engine.dispose()
 
 
@@ -31,13 +34,18 @@ class WorkerSettings:
     """ARQ worker settings."""
 
     functions = [process_scan_job]
-    redis_settings = None  # Set from config at startup
+    redis_settings = None  # Set by config at startup
+    job_timeout = 1800
+    max_jobs = 1
+    retry_jobs = False
+    max_tries = 1
 
     @classmethod
-    def configure(cls):
+    def configure(cls) -> None:
         from arq.connections import RedisSettings
 
         settings = get_settings()
+        cls.max_jobs = settings.worker_max_jobs
         url = settings.redis_url
         parts = url.replace("redis://", "").split("/")
         host_port = parts[0]
@@ -52,7 +60,7 @@ class WorkerSettings:
 
 
 async def enqueue_scan(scan_id: str) -> bool:
-    """Try to enqueue via ARQ, fall back to background task."""
+    """Try to enqueue to ARQ, fall back to background task."""
     try:
         from arq import create_pool
         from arq.connections import RedisSettings
@@ -67,11 +75,10 @@ async def enqueue_scan(scan_id: str) -> bool:
         else:
             host = host_port
             port_int = 6379
-
         pool = await create_pool(RedisSettings(host=host, port=port_int, database=db))
         await pool.enqueue_job("process_scan_job", scan_id)
         await pool.close()
-        logger.info("Enqueued scan %s via ARQ", scan_id)
+        logger.info("Enqueued scan %s to ARQ", scan_id)
         return True
     except Exception:
         logger.warning("ARQ not available, running scan in background task")
@@ -84,11 +91,12 @@ async def _background_scan(scan_id: str) -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url, echo=settings.debug)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+
     try:
         async with factory() as session:
             await run_scan(scan_id, session)
     except Exception:
-        logger.exception("Background scan %s failed", scan_id)
+        logger.exception("Background scan failed for %s", scan_id)
     finally:
         await engine.dispose()
 

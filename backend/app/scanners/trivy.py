@@ -36,11 +36,11 @@ class TrivyScanner(ScannerAdapter):
         )
         return result.return_code == 0
 
-    def detect_applicability(self, project_path: Path) -> bool:
+    def detect_applicability(self, project_path: Path, target_url: str | None = None) -> bool:
         """Trivy fs scan applies to any valid project directory."""
         return project_path.is_dir()
 
-    def build_command(self, project_path: Path) -> list[str]:
+    def build_command(self, project_path: Path, target_url: str | None = None) -> list[str]:
         return [
             "trivy",
             "fs",

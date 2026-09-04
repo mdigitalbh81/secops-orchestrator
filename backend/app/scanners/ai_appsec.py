@@ -79,6 +79,7 @@ EXCLUDED_EXTENSIONS = {
     ".lock",
 }
 
+
 def is_excluded_file(file_path: Path, max_file_bytes: int) -> bool:
     """Check if file should be excluded from LLM payload for privacy or performance."""
     if any(part in EXCLUDED_DIR_NAMES for part in file_path.parts):
@@ -164,7 +165,7 @@ class AiAppSecScanner(ScannerAdapter):
             and (settings.ai_appsec_api_key or settings.ai_appsec_base_url)
         )
 
-    def detect_applicability(self, project_path: Path) -> bool:
+    def detect_applicability(self, project_path: Path, target_url: str | None = None) -> bool:
         """Applies if there are analyzable source files."""
         settings = get_settings()
         try:
@@ -175,7 +176,7 @@ class AiAppSecScanner(ScannerAdapter):
             logger.debug("Error checking applicability for ai-appsec: %s", exc)
         return False
 
-    def build_command(self, project_path: Path) -> list[str]:
+    def build_command(self, project_path: Path, target_url: str | None = None) -> list[str]:
         return ["ai-appsec"]
 
     def collect_source_payload(self, project_path: Path) -> str:
@@ -208,7 +209,9 @@ class AiAppSecScanner(ScannerAdapter):
 
         return "".join(collected_chunks)
 
-    async def execute(self, project_path: Path, config: RunnerConfig | None = None) -> RunResult:
+    async def execute(
+        self, project_path: Path, target_url: str | None = None, config: RunnerConfig | None = None
+    ) -> RunResult:
         """Send sanitized source code to the LLM API provider and get structured JSON."""
         settings = get_settings()
         if not settings.ai_appsec_enabled or (

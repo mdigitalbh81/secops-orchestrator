@@ -1,0 +1,89 @@
+{
+  "@version": "2.15.0",
+  "@generated": "2026-09-03T10:00:00.000000",
+  "site": [
+    {
+      "@name": "http://staging-app:3000",
+      "@host": "staging-app",
+      "@port": "3000",
+      "@ssl": "false",
+      "alerts": [
+        {
+          "pluginid": "40018",
+          "alertRef": "40018",
+          "alert": "SQL Injection",
+          "name": "SQL Injection",
+          "riskcode": "3",
+          "confidence": "3",
+          "riskdesc": "High (High)",
+          "desc": "SQL injection may be possible in username parameter.",
+          "instances": [
+            {
+              "uri": "http://staging-app:3000/api/users",
+              "method": "POST",
+              "param": "username",
+              "attack": "admin' OR 1=1 --",
+              "evidence": "syntax error near unexpected token"
+            }
+          ],
+          "count": "1",
+          "solution": "Use parameterized queries or prepared statements.",
+          "reference": "https://owasp.org/www-community/attacks/SQL_Injection",
+          "cweid": "89",
+          "wascid": "19",
+          "sourceid": "1"
+        },
+        {
+          "pluginid": "10020",
+          "alertRef": "10020",
+          "alert": "X-Frame-Options Header Not Set",
+          "name": "X-Frame-Options Header Not Set",
+          "riskcode": "2",
+          "confidence": "2",
+          "riskdesc": "Medium (Medium)",
+          "desc": "The response does not include an X-Frame-Options header.",
+          "instances": [
+            {
+              "uri": "http://staging-app:3000/",
+              "method": "GET",
+              "param": "X-Frame-Options",
+              "attack": "",
+              "evidence": ""
+            }
+          ],
+          "count": "1",
+          "solution": "Ensure that the X-Frame-Options header is set to DENY or SAMEORIGIN.",
+          "reference": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options",
+          "cweid": "1021",
+          "wascid": "15",
+          "sourceid": "1"
+        },
+        {
+          "pluginid": "10096",
+          "alertRef": "10096",
+          "alert": "Timestamp Disclosure - Unix",
+          "name": "Timestamp Disclosure - Unix",
+          "riskcode": "0",
+          "confidence": "1",
+          "riskdesc": "Informational (Low)",
+          "desc": "A timestamp was disclosed in the application response.",
+          "instances": [
+            {
+              "uri": "http://staging-app:3000/api/health",
+              "method": "GET",
+              "param": "",
+              "attack": "",
+              "evidence": "1725350400"
+            }
+          ],
+          "count": "1",
+          "solution": "Manually confirm that the timestamp does not expose sensitive server state.",
+          "reference": "https://cwe.mitre.org/data/definitions/200.html",
+          "cweid": "200",
+          "wascid": "13",
+          "sourceid": "1"
+        }
+      ]
+    }
+  ]
+}

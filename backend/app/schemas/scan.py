@@ -10,6 +10,7 @@ from app.models.enums import RiskGate, ScanStatus
 class ScanCreate(BaseModel):
     project_id: str
     source_path: str
+    target_url: str | None = None
 
 
 class ScanResponse(BaseModel):
@@ -18,6 +19,7 @@ class ScanResponse(BaseModel):
     id: str
     project_id: str
     source_path: str
+    target_url: str | None = None
     status: ScanStatus
     risk_gate: RiskGate | None = None
     error_message: str | None = None

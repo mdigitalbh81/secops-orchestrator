@@ -22,9 +22,11 @@ def test_settings(tmp_path: Path) -> Settings:
         redis_url="redis://localhost:6379/0",
         workspace_base=workspace,
         allowed_workspace_root=tmp_path,
-        scanner_timeout=10,
-        scanner_max_output_bytes=1024 * 1024,
-    )
+       scanner_timeout=10,
+       scanner_max_output_bytes=1024 * 1024,
+       dast_allowed_hosts="localhost,127.0.0.1,api,staging-app,app,web,testserver,test-app,*.internal,*.local,*.test",
+       dast_enforce_host_allowlist=True,
+   )
     override_settings(settings)
     return settings
 
@@ -77,3 +79,13 @@ def trivy_json() -> str:
 @pytest.fixture
 def codeql_sarif() -> str:
     return (FIXTURES_DIR / "codeql_output.sarif").read_text()
+
+
+@pytest.fixture
+def zap_json() -> str:
+    return (FIXTURES_DIR / "zap_output.json").read_text()
+
+
+@pytest.fixture
+def nuclei_jsonl() -> str:
+    return (FIXTURES_DIR / "nuclei_output.jsonl").read_text()

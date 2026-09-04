@@ -1,5 +1,9 @@
-"""Core scan orchestration logic. Coordinates scanner detection, execution, parsing, normalization,
-deduplication, correlation, confidence adjustment, risk gating. Supports monorepos discovering per-scanner targets target_discovery executing each target independently within single ScannerRun.
+"""Core scan orchestration logic.
+
+Coordinates scanner detection, execution, parsing, normalization,
+deduplication, correlation, confidence adjustment, and risk gating.
+Supports monorepos by discovering per-scanner targets via target_discovery
+and executing each target independently within a single ScannerRun.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from app.models.finding import Finding, FindingEvidence
 from app.models.scan import Scan
 from app.models.scanner_run import ScannerRun
 from app.scanners import get_all_scanners
-from app.scanners.base import NormalizedFinding
+from app.scanners.base import NormalizedFinding, ScannerAdapter
 from app.security.runner import RunnerConfig, redact_secrets, validate_path
 from app.services.confidence import adjust_confidence
 from app.services.correlation import correlate_findings
@@ -35,7 +39,7 @@ def _normalize_file_path(
     target_path: Path,
     workspace_root: Path,
 ) -> str | None:
-    """Normalize finding's file_path relative to workspace_root."""
+    """Normalize a finding's file_path relative to the workspace_root."""
     if not file_path:
         return file_path
     p = Path(file_path)
@@ -46,7 +50,7 @@ def _normalize_file_path(
     try:
         return str(p.relative_to(workspace_root.resolve()))
     except ValueError:
-        # Path outside workspace; keep as-is
+        # Path is outside workspace; keep as-is
         return file_path
 
 
@@ -54,11 +58,11 @@ def _extract_target_provenance(
     target: ScanTarget,
     workspace_root: Path,
 ) -> tuple[str, str | None]:
-    """Derive (subproject, manifest) strings from ScanTarget."""
+    """Derive (subproject, manifest) strings from a ScanTarget."""
     if target.manifest_path:
         manifest_str = str(target.manifest_path)
-        parent = str(target.manifest_path.parent)
-        subproject_str = parent if parent != "." else "root"
+        parent_str = str(target.manifest_path.parent)
+        subproject_str = parent_str if parent_str != "." else "root"
     else:
         try:
             rel = target.path.resolve().relative_to(workspace_root.resolve())
@@ -70,12 +74,13 @@ def _extract_target_provenance(
 
 
 async def _execute_scanner_for_target(
-    scanner,
+    scanner: ScannerAdapter,
     target: ScanTarget,
     workspace_root: Path,
     config: RunnerConfig,
+    target_url: str | None = None,
 ) -> tuple[list[NormalizedFinding], str | None, bool, str, str, float]:
-    """Execute scanner against single target.
+    """Execute a scanner against a single target.
 
     Returns (findings, error_message, timed_out, stdout, stderr, duration_seconds).
     """
@@ -85,7 +90,12 @@ async def _execute_scanner_for_target(
     try:
         # Validate target path stays strictly within workspace root
         validate_path(target.path, [workspace_root])
-        result = await scanner.execute(target.path, config=config)
+        effective_target_url = target.metadata.get("target_url") or target_url
+        result = await scanner.execute(
+            target.path,
+            target_url=effective_target_url,
+            config=config,
+        )
         duration = (datetime.now(UTC) - t0).total_seconds()
         stdout = redact_secrets(result.stdout or "")
         stderr = redact_secrets(result.stderr or "")
@@ -94,7 +104,7 @@ async def _execute_scanner_for_target(
             return [], "Scanner timed out", True, stdout, stderr, duration
 
         if result.return_code != 0 and not stdout.strip() and result.stderr.strip():
-            # Fatal tool execution error (e.g. crash/missing config)
+            # Fatal tool execution error (e.g. crash / missing config)
             return [], stderr[:1000], False, stdout, stderr, duration
 
         raw_findings = scanner.parse_result(result)
@@ -102,11 +112,10 @@ async def _execute_scanner_for_target(
 
         subproject_str, manifest_str = _extract_target_provenance(target, workspace_root)
 
-        # Normalize file paths relative to workspace root & inject subproject provenance
+        # Normalize file paths relative to workspace root and inject subproject provenance
         for nf in normalized:
-            nf.file_path = _normalize_file_path(
-                nf.file_path, target.path, workspace_root
-            )
+            if nf.file_path:
+                nf.file_path = _normalize_file_path(nf.file_path, target.path, workspace_root)
             # Inject subproject provenance into raw_data to survive dedup & correlation
             if isinstance(nf.raw_data, dict):
                 nf.raw_data["subproject"] = subproject_str
@@ -125,6 +134,7 @@ async def _execute_scanner_for_target(
                 }
 
         return normalized, None, False, stdout, stderr, duration
+
     except Exception as exc:
         duration = (datetime.now(UTC) - t0).total_seconds()
         logger.exception("Scanner %s failed on target %s", scanner.name, target.path)
@@ -132,7 +142,7 @@ async def _execute_scanner_for_target(
 
 
 async def run_scan(scan_id: str, session: AsyncSession) -> None:
-    """Execute the full scan pipeline for a given scan record."""
+    """Execute full scan pipeline for a given scan record."""
     scan = await session.get(Scan, scan_id)
     if scan is None:
         logger.error("Scan %s not found", scan_id)
@@ -144,9 +154,7 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
     settings = get_settings()
 
     try:
-        project_path = validate_path(
-            Path(scan.source_path), [settings.allowed_workspace_root]
-        )
+        project_path = validate_path(Path(scan.source_path), [settings.allowed_workspace_root])
     except Exception as exc:
         scan.status = ScanStatus.FAILED
         scan.error_message = f"Invalid source path: {exc}"
@@ -162,10 +170,10 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
         return
 
     scanners = get_all_scanners()
-    detection = await detect_applicable_scanners(project_path, scanners)
+    detection = await detect_applicable_scanners(project_path, scanners, target_url=scan.target_url)
 
-    # Discover monorepo targets
-    targets = discover_scan_targets(project_path)
+    # Discover monorepo & DAST targets
+    targets = discover_scan_targets(project_path, target_url=scan.target_url)
 
     # Index targets by scanner name
     targets_by_scanner: dict[str, list[ScanTarget]] = {}
@@ -192,7 +200,7 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
         if not available:
             runner.status = ScannerRunStatus.UNAVAILABLE
             if scanner_name == "ai-appsec":
-                runner.error_message = "AI AppSec Reviewer disabled or not configured"
+                runner.error_message = "AI AppSec Reviewer is disabled or not configured"
             else:
                 runner.error_message = f"{scanner_name} not installed"
             session.add(runner)
@@ -205,7 +213,7 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
         start_time = datetime.now(UTC)
         scanner_targets = targets_by_scanner.get(scanner_name, [])
 
-        # Scanners with no discovered subtargets: fall back to project root
+        # For scanners with no discovered subtargets: fall back to project root
         if not scanner_targets:
             scanner_targets = [
                 ScanTarget(
@@ -226,13 +234,19 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
         last_error: str | None = None
 
         for target in scanner_targets:
-            findings, error, timed_out, stdout, stderr, duration = (
-                await _execute_scanner_for_target(
-                    scanner,
-                    target,
-                    project_path,
-                    config,
-                )
+            (
+                findings,
+                error,
+                timed_out,
+                stdout,
+                stderr,
+                duration,
+            ) = await _execute_scanner_for_target(
+                scanner,
+                target,
+                project_path,
+                config,
+                target_url=scan.target_url,
             )
 
             subproject_str, manifest_str = _extract_target_provenance(target, project_path)
@@ -263,7 +277,7 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
 
         all_findings.extend(scanner_findings)
 
-        # Store subtarget metadata and raw output for auditability
+        # Store subtarget metadata in raw output for auditability
         raw_output_obj = {"subtargets": subtarget_results}
         runner.raw_output = json.dumps(raw_output_obj, default=str)[:100000]
 
@@ -281,12 +295,12 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
             runner.error_message = last_error or "All targets failed"
         else:
             runner.status = ScannerRunStatus.PARTIAL
-            runner.error_message = f"{failed_targets} of {total_targets} target(s) failed: {last_error}"
+            runner.error_message = (
+                f"{failed_targets} of {total_targets} target(s) failed: {last_error}"
+            )
 
         runner.completed_at = datetime.now(UTC)
-        runner.duration_seconds = (
-            runner.completed_at - start_time
-        ).total_seconds()
+        runner.duration_seconds = (runner.completed_at - start_time).total_seconds()
 
     # 1. Deterministic deduplication
     deduped = deduplicate_findings(all_findings)
@@ -360,7 +374,6 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
     scan.risk_gate = risk_gate
     scan.completed_at = datetime.now(UTC)
     await session.commit()
-
     logger.info(
         "Scan %s completed: %d findings, %d correlation groups, risk_gate=%s",
         scan_id,

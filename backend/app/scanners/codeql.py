@@ -122,15 +122,17 @@ class CodeQLScanner(ScannerAdapter):
             logger.warning("Error scanning project files for CodeQL languages")
         return sorted(languages)
 
-    def detect_applicability(self, project_path: Path) -> bool:
+    def detect_applicability(self, project_path: Path, target_url: str | None = None) -> bool:
         """Return True if Python or JS/TS code is detected."""
         return len(self.detect_languages(project_path)) > 0
 
-    def build_command(self, project_path: Path) -> list[str]:
+    def build_command(self, project_path: Path, target_url: str | None = None) -> list[str]:
         """Return default command for single execution fallback."""
         return ["codeql", "version"]
 
-    async def execute(self, project_path: Path, config: RunnerConfig | None = None) -> RunResult:
+    async def execute(
+        self, project_path: Path, target_url: str | None = None, config: RunnerConfig | None = None
+    ) -> RunResult:
         """Execute CodeQL database creation and analysis per detected language."""
         settings = get_settings()
         languages = self.detect_languages(project_path)
@@ -179,6 +181,7 @@ class CodeQLScanner(ScannerAdapter):
                     cwd=project_path,
                     config=runner_config,
                 )
+
                 if create_res.timed_out:
                     overall_timed_out = True
                     stderr_parts.append(f"CodeQL database creation timed out for {lang}")
@@ -192,14 +195,16 @@ class CodeQLScanner(ScannerAdapter):
                 # 2. Analyze database
                 analyze_cmd = [
                     "codeql",
-                    "database",
-                    "analyze",
-                    str(db_dir),
-                    f"{lang}-security-and-quality.qls",
-                    "--format=sarif-latest",
+               "database",
+               "analyze",
+               str(db_dir),
+                f"codeql/{lang}-queries:codeql-suites/{lang}-security-and-quality.qls",
+               "--format=sarif-latest",
                     f"--output={sarif_file}",
-                    "--threads=0",
+                    f"--threads={settings.codeql_threads}",
                 ]
+                if settings.codeql_ram_mb:
+                    analyze_cmd.append(f"--ram={settings.codeql_ram_mb}")
                 analyze_res = await run_command(
                     analyze_cmd,
                     cwd=project_path,
@@ -207,7 +212,7 @@ class CodeQLScanner(ScannerAdapter):
                 )
 
                 # Fallback if standard suite name is different
-                if analyze_res.return_code != 0 and not sarif_file.exists():
+                if analyze_res.return_code != 0 or not sarif_file.exists():
                     analyze_cmd_fallback = [
                         "codeql",
                         "database",
@@ -215,8 +220,10 @@ class CodeQLScanner(ScannerAdapter):
                         str(db_dir),
                         "--format=sarif-latest",
                         f"--output={sarif_file}",
-                        "--threads=0",
+                        f"--threads={settings.codeql_threads}",
                     ]
+                    if settings.codeql_ram_mb:
+                        analyze_cmd_fallback.append(f"--ram={settings.codeql_ram_mb}")
                     analyze_res = await run_command(
                         analyze_cmd_fallback,
                         cwd=project_path,

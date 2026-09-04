@@ -90,8 +90,12 @@ def test_2_different_scanners_same_fingerprint():
 
 
 def test_3_different_scanners_same_cve_package():
-    fp1 = compute_normalized_fingerprint(cve="CVE-2023-1000", package_name="axios", title="Axios SSRF")
-    fp2 = compute_normalized_fingerprint(cve="CVE-2023-1000", package_name="axios", title="Axios SSRF")
+    fp1 = compute_normalized_fingerprint(
+        cve="CVE-2023-1000", package_name="axios", title="Axios SSRF"
+    )
+    fp2 = compute_normalized_fingerprint(
+        cve="CVE-2023-1000", package_name="axios", title="Axios SSRF"
+    )
     f1 = NormalizedFinding(
         title="Axios SSRF",
         description="npm-audit report",
@@ -123,7 +127,9 @@ def test_3_different_scanners_same_cve_package():
 
 
 def test_4_same_scanner_same_cve_package_repeated():
-    fp = compute_normalized_fingerprint(cve="CVE-2022-40897", package_name="setuptools", title="ReDoS")
+    fp = compute_normalized_fingerprint(
+        cve="CVE-2022-40897", package_name="setuptools", title="ReDoS"
+    )
     f1 = NormalizedFinding(
         title="ReDoS in setuptools",
         description="pip-audit 1",
@@ -156,7 +162,9 @@ def test_4_same_scanner_same_cve_package_repeated():
 
 
 def test_5_three_results_semgrep_duplicate_and_codeql():
-    fp = compute_normalized_fingerprint(cwe="CWE-78", file_path="app/exec.py", title="cmd-injection")
+    fp = compute_normalized_fingerprint(
+        cwe="CWE-78", file_path="app/exec.py", title="cmd-injection"
+    )
     f1 = NormalizedFinding(
         title="cmd-injection",
         description="Semgrep duplicate 1",

@@ -68,10 +68,10 @@ async def test_orchestrator_full_flow(
     assert scan.risk_gate == RiskGate.BLOCKED
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     statuses = {r.scanner_name: r.status for r in runs}
     assert statuses["semgrep"] == ScannerRunStatus.COMPLETED
     assert statuses["npm-audit"] == ScannerRunStatus.COMPLETED
@@ -79,10 +79,10 @@ async def test_orchestrator_full_flow(
     assert statuses["trivy"] == ScannerRunStatus.COMPLETED
 
     findings = (
-        await db_session.execute(
-            select(Finding).where(Finding.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(Finding).where(Finding.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     assert len(findings) > 0
 
     npm_run = next(r for r in runs if r.scanner_name == "npm-audit")
@@ -135,10 +135,10 @@ async def test_orchestrator_scanner_failure_does_not_break_scan(
     assert scan.status == ScanStatus.COMPLETED
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     statuses = {r.scanner_name: r.status for r in runs}
     assert statuses["semgrep"] == ScannerRunStatus.COMPLETED
     assert statuses["npm-audit"] == ScannerRunStatus.FAILED
@@ -185,10 +185,10 @@ async def test_partial_failure_two_targets_success_completed(
         await run_scan(scan.id, db_session)
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     npm_run = next(r for r in runs if r.scanner_name == "npm-audit")
     assert npm_run.status == ScannerRunStatus.COMPLETED
     raw = json.loads(npm_run.raw_output)
@@ -236,10 +236,10 @@ async def test_partial_failure_two_targets_failure_failed(
         await run_scan(scan.id, db_session)
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     npm_run = next(r for r in runs if r.scanner_name == "npm-audit")
     assert npm_run.status == ScannerRunStatus.FAILED
     raw = json.loads(npm_run.raw_output)
@@ -291,10 +291,10 @@ async def test_partial_failure_one_success_one_failure_partial(
         await run_scan(scan.id, db_session)
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     npm_run = next(r for r in runs if r.scanner_name == "npm-audit")
     assert npm_run.status == ScannerRunStatus.PARTIAL
     assert "1 of 2 target(s) failed" in (npm_run.error_message or "")
@@ -348,10 +348,10 @@ async def test_partial_failure_one_success_one_timeout_partial(
         await run_scan(scan.id, db_session)
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     npm_run = next(r for r in runs if r.scanner_name == "npm-audit")
     assert npm_run.status == ScannerRunStatus.PARTIAL
     raw = json.loads(npm_run.raw_output)
@@ -406,9 +406,7 @@ async def test_subproject_provenance_in_finding_evidence(
         await run_scan(scan.id, db_session)
 
     # Query evidences
-    evidences = (
-        await db_session.execute(select(FindingEvidence))
-    ).scalars().all()
+    evidences = (await db_session.execute(select(FindingEvidence))).scalars().all()
     assert len(evidences) > 0
 
     npm_evidences = [e for e in evidences if e.scanner_name == "npm-audit"]
@@ -493,16 +491,18 @@ async def test_raw_output_preservation_and_secret_redaction(
     db_session.add(scan)
     await db_session.commit()
 
-    sensitive_stdout = json.dumps({
-        "vulnerabilities": {
-            "bad-pkg": {
-                "name": "bad-pkg",
-                "severity": "high",
-                "title": "Leaked AWS: AKIAIOSFODNN7EXAMPLE and api_key='sk_live_1234567890abcdef\'",
-                "via": [{"cve": "CVE-2023-9999", "title": "secret leak"}]
+    sensitive_stdout = json.dumps(
+        {
+            "vulnerabilities": {
+                "bad-pkg": {
+                    "name": "bad-pkg",
+                    "severity": "high",
+                    "title": "Leaked AWS: AKIAIOSFODNN7EXAMPLE and api_key='sk_live_1234567890abcdef'",
+                    "via": [{"cve": "CVE-2023-9999", "title": "secret leak"}],
+                }
             }
         }
-    })
+    )
 
     async def mock_run_command(argv, cwd=None, config=None):
         tool = argv[0]
@@ -528,10 +528,10 @@ async def test_raw_output_preservation_and_secret_redaction(
         await run_scan(scan.id, db_session)
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     npm_run = next(r for r in runs if r.scanner_name == "npm-audit")
     raw = json.loads(npm_run.raw_output)
     subtarget = raw["subtargets"][0]
@@ -589,21 +589,27 @@ async def test_successful_scan_with_zero_findings_completes_with_pass(
     assert scan.completed_at is not None
 
     findings = (
-        await db_session.execute(select(Finding).where(Finding.scan_id == scan.id))
-    ).scalars().all()
+        (await db_session.execute(select(Finding).where(Finding.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     assert len(findings) == 0
 
     groups = (
-        await db_session.execute(
-            select(CorrelationGroup).where(CorrelationGroup.scan_id == scan.id)
+        (
+            await db_session.execute(
+                select(CorrelationGroup).where(CorrelationGroup.scan_id == scan.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(groups) == 0
 
     runs = (
-        await db_session.execute(
-            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ScannerRun).where(ScannerRun.scan_id == scan.id)))
+        .scalars()
+        .all()
+    )
     statuses = {r.scanner_name: r.status for r in runs}
     assert statuses.get("npm-audit") == ScannerRunStatus.COMPLETED

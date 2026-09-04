@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from unittest.mock import patch
 
 from httpx import AsyncClient
@@ -55,7 +53,59 @@ async def test_create_scan(client: AsyncClient, tmp_path):
         data = scan_res.json()
         assert data["project_id"] == project_id
         assert data["status"] == "PENDING"
+        assert data["target_url"] is None
         assert data["id"] is not None
+
+
+async def test_create_scan_with_valid_target_url(client: AsyncClient, tmp_path):
+    proj_res = await client.post("/api/projects", json={"name": "DAST Scan Test"})
+    assert proj_res.status_code == 201
+    project_id = proj_res.json()["id"]
+
+    with patch("app.api.routes.enqueue_scan") as mock_enqueue:
+        mock_enqueue.return_value = True
+        scan_res = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "source_path": str(tmp_path),
+                "target_url": "http://staging-app:3000/api",
+            },
+        )
+        assert scan_res.status_code == 202
+        data = scan_res.json()
+        assert data["project_id"] == project_id
+        assert data["target_url"] == "http://staging-app:3000/api"
+
+
+async def test_create_scan_with_invalid_target_url(client: AsyncClient, tmp_path):
+    proj_res = await client.post("/api/projects", json={"name": "DAST Invalid URL Test"})
+    assert proj_res.status_code == 201
+    project_id = proj_res.json()["id"]
+
+    # Forbidden scheme
+    res1 = await client.post(
+        "/api/scans",
+        json={
+            "project_id": project_id,
+            "source_path": str(tmp_path),
+            "target_url": "file:///etc/passwd",
+        },
+    )
+    assert res1.status_code == 400
+    assert "Invalid target_url" in res1.json()["detail"]
+
+    # Disallowed external host
+    res2 = await client.post(
+        "/api/scans",
+        json={
+            "project_id": project_id,
+            "source_path": str(tmp_path),
+            "target_url": "http://evil-external-target.com",
+        },
+    )
+    assert res2.status_code == 400
+    assert "Invalid target_url" in res2.json()["detail"]
 
 
 async def test_create_scan_nonexistent_project(client: AsyncClient, tmp_path):
@@ -144,7 +194,9 @@ async def test_summary_and_correlations_detailed(
         canonical_cwe="CWE-89",
         severity=Severity.HIGH,
         confidence=0.90,
-        evidence_level=EvidenceLevel.CORROBORATED_STATIC,
+        evidence_level=EvidenceLevel.CORROBOTATED_STATIC
+        if hasattr(EvidenceLevel, "CORROBOTATED_STATIC")
+        else EvidenceLevel.CORROBORATED_STATIC,
         status=FindingStatus.OPEN,
     )
     db_session.add(group)
@@ -236,9 +288,7 @@ async def test_create_scan_path_traversal_rejected(client: AsyncClient) -> None:
 
 
 async def test_partial_scanner_run_in_summary_and_runs_api(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    tmp_path,
+    client: AsyncClient, db_session: AsyncSession, tmp_path
 ):
     project = Project(name="Partial Route Test")
     db_session.add(project)

@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     git \
     tar \
     gzip \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install scanner CLI tools (pip-audit, semgrep)
@@ -25,12 +26,25 @@ RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/
 
 # Install CodeQL CLI bundle (pinned version codeql-bundle-v2.26.4)
 ARG CODEQL_VERSION=codeql-bundle-v2.26.4
-RUN curl -sfL "https://github.com/github/codeql-action/releases/download/${CODEQL_VERSION}/codeql-bundle-linux64.tar.gz" -o /tmp/codeql-bundle.tar.gz \
+RUN curl -sfL https://github.com/github/codeql-action/releases/download/${CODEQL_VERSION}/codeql-bundle-linux64.tar.gz -o /tmp/codeql-bundle.tar.gz \
     && mkdir -p /opt/codeql \
     && tar -xzf /tmp/codeql-bundle.tar.gz -C /opt/codeql \
     && rm -f /tmp/codeql-bundle.tar.gz \
     && ln -s /opt/codeql/codeql/codeql /usr/local/bin/codeql \
-    && chmod -R a+rx /opt/codeql
+    && chmod -R a+rX /opt/codeql
+
+# Install Nuclei CLI (pinned version v3.3.2)
+ARG NUCLEI_VERSION=v3.3.2
+RUN curl -sfL "https://github.com/projectdiscovery/nuclei/releases/download/${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION#v}_linux_amd64.zip" -o /tmp/nuclei.zip \
+    && unzip -q /tmp/nuclei.zip -d /usr/local/bin nuclei \
+    && rm -f /tmp/nuclei.zip \
+    && chmod +x /usr/local/bin/nuclei
+
+# Pre-install pinned Nuclei templates (pinned version v10.4.8)
+ARG NUCLEI_TEMPLATES_VERSION=v10.4.8
+RUN mkdir -p /home/secops/nuclei-templates /home/secops/.config/nuclei \
+    && curl -sfL "https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/${NUCLEI_TEMPLATES_VERSION}.tar.gz" | tar -xz -C /home/secops/nuclei-templates --strip-components=1 \
+    && printf '{"nuclei-templates-directory":"/home/secops/nuclei-templates","nuclei-templates-version":"%s","nuclei-latest-version":"%s","nuclei-templates-latest-version":"%s"}\n' "${NUCLEI_TEMPLATES_VERSION}" "${NUCLEI_VERSION}" "${NUCLEI_TEMPLATES_VERSION}" > /home/secops/.config/nuclei/.templates-config.json
 
 WORKDIR /app
 

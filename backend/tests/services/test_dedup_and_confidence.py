@@ -35,6 +35,7 @@ def test_deduplicate_same_scanner_duplicates():
     assert result[0].confidence == 0.7
     assert len(result[0].evidences) == 2
 
+
 def test_deduplicate_cross_scanner_preserves_both():
     fp = compute_normalized_fingerprint(
         cve="CVE-2019-10744", package_name="lodash", title="Prototype Pollution"

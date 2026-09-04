@@ -1,7 +1,7 @@
 """Base scanner adapter interface.
 
 Every scanner adapter must subclass ScannerAdapter and implement all abstract methods.
-The orchestrator interacts only through this interface and scanner-specific
+The orchestrator interacts only through this interface so scanner-specific
 details are confined to each adapter module.
 """
 
@@ -54,6 +54,7 @@ def compute_fingerprint(
     file_path: str | None = None,
     line_start: int | None = None,
     title: str = "",
+    url: str | None = None,
 ) -> str:
     """Deterministic scanner-specific raw fingerprint."""
     parts = [scanner]
@@ -67,7 +68,9 @@ def compute_fingerprint(
         parts.append(f"file:{file_path}")
     if line_start is not None:
         parts.append(f"line:{line_start}")
-    if not cve and not cwe and not package_name:
+    if url:
+        parts.append(f"url:{url}")
+    if not cve and not cwe and not package_name and not file_path and not url:
         parts.append(f"title:{title}")
     return "|".join(parts)
 
@@ -78,6 +81,7 @@ def compute_normalized_fingerprint(
     package_name: str | None = None,
     file_path: str | None = None,
     title: str = "",
+    url: str | None = None,
 ) -> str:
     """Scanner-agnostic fingerprint for cross-scanner deduplication."""
     parts: list[str] = []
@@ -87,12 +91,16 @@ def compute_normalized_fingerprint(
             parts.append(f"pkg:{package_name.strip().lower()}")
         elif file_path:
             parts.append(f"file:{file_path.strip()}")
+        elif url:
+            parts.append(f"url:{url.strip()}")
     elif cwe:
         parts.append(f"cwe:{cwe.strip().upper()}")
         if package_name:
             parts.append(f"pkg:{package_name.strip().lower()}")
         elif file_path:
             parts.append(f"file:{file_path.strip()}")
+        elif url:
+            parts.append(f"url:{url.strip()}")
         else:
             parts.append(f"title:{title.strip().lower()}")
     elif package_name:
@@ -100,6 +108,9 @@ def compute_normalized_fingerprint(
         parts.append(f"title:{title.strip().lower()}")
     elif file_path:
         parts.append(f"file:{file_path.strip()}")
+        parts.append(f"title:{title.strip().lower()}")
+    elif url:
+        parts.append(f"url:{url.strip()}")
         parts.append(f"title:{title.strip().lower()}")
     else:
         parts.append(f"title:{title.strip().lower()}")
@@ -114,23 +125,28 @@ class ScannerAdapter(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Unique scanner identifier, e.g. 'semgrep'."""
+        """Unique scanner identifier, e.g. \x27semgrep\x27."""
 
     @abstractmethod
     async def is_available(self) -> bool:
-        """Check if scanner binary/tool is installed and callable."""
+        """Check if the scanner binary/tool is installed and callable."""
 
     @abstractmethod
-    def detect_applicability(self, project_path: Path) -> bool:
-        """Return True if scanner applies to the given project."""
+    def detect_applicability(self, project_path: Path, target_url: str | None = None) -> bool:
+        """Return True if the scanner applies to the given project / target."""
 
     @abstractmethod
-    def build_command(self, project_path: Path) -> list[str]:
+    def build_command(self, project_path: Path, target_url: str | None = None) -> list[str]:
         """Return argv list to execute scanner."""
 
-    async def execute(self, project_path: Path, config: RunnerConfig | None = None) -> RunResult:
+    async def execute(
+        self,
+        project_path: Path,
+        target_url: str | None = None,
+        config: RunnerConfig | None = None,
+    ) -> RunResult:
         """Run scanner through secure runner."""
-        argv = self.build_command(project_path)
+        argv = self.build_command(project_path, target_url=target_url)
         return await run_command(argv, cwd=project_path, config=config)
 
     @abstractmethod
@@ -139,4 +155,4 @@ class ScannerAdapter(ABC):
 
     @abstractmethod
     def normalize_findings(self, raw_findings: list[dict]) -> list[NormalizedFinding]:
-        """Convert raw findings into NormalizedFinding instances."""
+        """Convert raw findings to NormalizedFinding instances."""

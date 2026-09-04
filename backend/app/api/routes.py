@@ -22,6 +22,7 @@ from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.scan import ScanCreate, ScanResponse
 from app.schemas.scanner_run import ScannerRunResponse
 from app.schemas.summary import EvidenceSummary, ScanSummary, SeverityTotals
+from app.security.dast_validator import validate_dast_url
 from app.security.runner import RunnerSecurityError, validate_path
 from app.workers.scan_worker import enqueue_scan
 
@@ -54,16 +55,27 @@ async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -
     except RunnerSecurityError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid source_path: {exc}") from exc
 
+    validated_target_url: str | None = None
+    if payload.target_url:
+        try:
+            validated_target_url = validate_dast_url(
+                payload.target_url,
+                allowed_hosts=settings.get_dast_allowed_hosts(),
+                enforce_allowlist=settings.dast_enforce_host_allowlist,
+            )
+        except RunnerSecurityError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid target_url: {exc}") from exc
+
     scan = Scan(
         project_id=payload.project_id,
         source_path=str(validated_path),
+        target_url=validated_target_url,
     )
     db.add(scan)
     await db.flush()
     await db.refresh(scan)
     # Commit before enqueuing so the worker can see the scan
     await db.commit()
-
     await enqueue_scan(scan.id)
     return scan
 
@@ -76,10 +88,7 @@ async def get_scan(scan_id: str, db: AsyncSession = Depends(get_db)) -> Scan:
     return scan
 
 
-@router.get(
-    "/scans/{scan_id}/scanner-runs",
-    response_model=list[ScannerRunResponse],
-)
+@router.get("/scans/{scan_id}/scanner-runs", response_model=list[ScannerRunResponse])
 async def get_scanner_runs(scan_id: str, db: AsyncSession = Depends(get_db)) -> list[ScannerRun]:
     result = await db.execute(select(ScannerRun).where(ScannerRun.scan_id == scan_id))
     return list(result.scalars().all())
@@ -91,10 +100,7 @@ async def get_findings(scan_id: str, db: AsyncSession = Depends(get_db)) -> list
     return list(result.scalars().all())
 
 
-@router.get(
-    "/scans/{scan_id}/correlations",
-    response_model=list[CorrelationGroupResponse],
-)
+@router.get("/scans/{scan_id}/correlations", response_model=list[CorrelationGroupResponse])
 async def get_correlations(
     scan_id: str, db: AsyncSession = Depends(get_db)
 ) -> list[CorrelationGroup]:
@@ -107,7 +113,9 @@ async def get_correlations(
     response_model=CorrelationGroupResponse,
 )
 async def get_correlation_detail(
-    scan_id: str, correlation_id: str, db: AsyncSession = Depends(get_db)
+    scan_id: str,
+    correlation_id: str,
+    db: AsyncSession = Depends(get_db),
 ) -> CorrelationGroup:
     result = await db.execute(
         select(CorrelationGroup).where(
@@ -121,10 +129,7 @@ async def get_correlation_detail(
     return group
 
 
-@router.get(
-    "/scans/{scan_id}/evidence-summary",
-    response_model=EvidenceSummary,
-)
+@router.get("/scans/{scan_id}/evidence-summary", response_model=EvidenceSummary)
 async def get_evidence_summary(scan_id: str, db: AsyncSession = Depends(get_db)) -> EvidenceSummary:
     scan = await db.get(Scan, scan_id)
     if scan is None:
@@ -142,7 +147,6 @@ async def get_evidence_summary(scan_id: str, db: AsyncSession = Depends(get_db))
     single_count = 0
     corroborated_count = 0
     runtime_count = 0
-
     for f in findings:
         lvl = str(
             f.evidence_level.value if hasattr(f.evidence_level, "value") else f.evidence_level
@@ -202,6 +206,7 @@ async def get_scan_summary(scan_id: str, db: AsyncSession = Depends(get_db)) -> 
         select(CorrelationGroup).where(CorrelationGroup.scan_id == scan_id)
     )
     correlations = list(corr_result.scalars().all())
+
     corr_totals = SeverityTotals()
     for cg in correlations:
         match cg.severity:

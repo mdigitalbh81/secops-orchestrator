@@ -23,16 +23,24 @@ def deduplicate_findings(
     findings: list[NormalizedFinding],
 ) -> list[NormalizedFinding]:
     seen: dict[tuple[str, str], NormalizedFinding] = {}
+
     for finding in findings:
         key = (finding.scanner_name, finding.normalized_fingerprint)
         if key in seen:
             existing = seen[key]
-            finding_evidences = finding.evidences or ([finding.raw_data] if finding.raw_data else [])
+            # Accumulate all raw evidence records from duplicates
+            finding_evidences = finding.evidences or (
+                [finding.raw_data] if finding.raw_data else []
+            )
             for ev in finding_evidences:
                 if ev not in existing.evidences:
                     existing.evidences.append(ev)
+
+            # Preserve highest severity
             if SEVERITY_RANKS.get(finding.severity, 0) > SEVERITY_RANKS.get(existing.severity, 0):
                 existing.severity = finding.severity
+
+            # Merge missing fields
             if not existing.cwe and finding.cwe:
                 existing.cwe = finding.cwe
             if not existing.cve and finding.cve:
@@ -50,10 +58,21 @@ def deduplicate_findings(
                 existing.installed_version = finding.installed_version
             if not existing.fixed_version and finding.fixed_version:
                 existing.fixed_version = finding.fixed_version
+
+            # Highest confidence
             existing.confidence = max(existing.confidence, finding.confidence)
-            existing.evidence_level = EvidenceLevel.SINGLE_SOURCE
+
+            # Maintain correct evidence level (runtime remains runtime)
+            if (
+                existing.evidence_level == EvidenceLevel.RUNTIME_VALIDATED
+                or finding.evidence_level == EvidenceLevel.RUNTIME_VALIDATED
+            ):
+                existing.evidence_level = EvidenceLevel.RUNTIME_VALIDATED
+            else:
+                existing.evidence_level = EvidenceLevel.SINGLE_SOURCE
+
             logger.info(
-                "Dedup: consolidated same-scanner duplicate %s (fp=%s)",
+                "Dedup: consolidated same-scanner duplicates (%s fp=%s)",
                 existing.scanner_name,
                 key[1][:12],
             )
@@ -61,4 +80,5 @@ def deduplicate_findings(
             if not finding.evidences and finding.raw_data:
                 finding.evidences = [finding.raw_data]
             seen[key] = finding
+
     return list(seen.values())

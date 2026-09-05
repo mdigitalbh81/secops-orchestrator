@@ -5,12 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-    RUN addgroup --system --gid 1000 secops && adduser --system --uid 1000 --ingroup secops --home /home/secops secops && mkdir -p /tmp/secops-workspaces && chown -R secops:secops /tmp/secops-workspaces
-
-COPY backend/pyproject.toml /app/
-RUN pip install --no-cache-dir .
+RUN addgroup --system --gid 1000 secops && adduser --system --uid 1000 --ingroup secops --home /home/secops secops && mkdir -p /tmp/secops-workspaces && chown -R secops:secops /tmp/secops-workspaces
 
 COPY backend /app
+RUN pip install --no-cache-dir . && rm -rf /app/*.egg-info /app/build
 
 USER secops
 

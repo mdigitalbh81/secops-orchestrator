@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,12 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.correlation import CorrelationGroup
-from app.models.enums import Severity
+from app.models.enums import FindingStatus, Severity
 from app.models.finding import Finding
 from app.models.project import Project
 from app.models.scan import Scan
 from app.models.scanner_run import ScannerRun
 from app.schemas.correlation import CorrelationGroupResponse
+from app.schemas.disposition import (
+    CurrentDispositionResponse,
+    DispositionEventResponse,
+    DispositionRequest,
+    DispositionResponse,
+)
 from app.schemas.finding import FindingResponse
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.scan import ScanCreate, ScanResponse
@@ -24,6 +31,13 @@ from app.schemas.scanner_run import ScannerRunResponse
 from app.schemas.summary import EvidenceSummary, ScanSummary, SeverityTotals
 from app.security.dast_validator import validate_dast_url
 from app.security.runner import RunnerSecurityError, validate_path
+from app.services.finding_disposition import (
+    ALLOWED_DISPOSITIONS,
+    get_disposition_history,
+    get_finding_disposition,
+    resolve_expired_dispositions,
+    set_disposition,
+)
 from app.workers.scan_worker import enqueue_scan
 
 router = APIRouter(prefix="/api")
@@ -85,6 +99,10 @@ async def get_scan(scan_id: str, db: AsyncSession = Depends(get_db)) -> Scan:
     scan = await db.get(Scan, scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
+
+    await resolve_expired_dispositions(db, scan.project_id)
+    await db.commit()
+    await db.refresh(scan)
     return scan
 
 
@@ -176,6 +194,10 @@ async def get_scan_summary(scan_id: str, db: AsyncSession = Depends(get_db)) -> 
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
 
+    await resolve_expired_dispositions(db, scan.project_id)
+    await db.commit()
+    await db.refresh(scan)
+
     # Count findings by severity
     findings_result = await db.execute(select(Finding).where(Finding.scan_id == scan_id))
     findings = list(findings_result.scalars().all())
@@ -228,6 +250,23 @@ async def get_scan_summary(scan_id: str, db: AsyncSession = Depends(get_db)) -> 
     runs = list(runs_result.scalars().all())
     scanner_runs = {r.scanner_name: r.status.value.lower() for r in runs}
 
+    # Disposition status counts
+    actionable_count = sum(
+        1 for f in findings if FindingStatus(f.status) == FindingStatus.OPEN
+    )
+    false_positive_count = sum(
+        1 for f in findings if FindingStatus(f.status) == FindingStatus.FALSE_POSITIVE
+    )
+    accepted_risk_count = sum(
+        1 for f in findings if FindingStatus(f.status) == FindingStatus.ACCEPTED_RISK
+    )
+    accepted_by_design_count = sum(
+        1 for f in findings if FindingStatus(f.status) == FindingStatus.ACCEPTED_BY_DESIGN
+    )
+    fixed_count = sum(
+        1 for f in findings if FindingStatus(f.status) == FindingStatus.FIXED
+    )
+
     return ScanSummary(
         scan_id=scan_id,
         status=scan.status,
@@ -236,4 +275,96 @@ async def get_scan_summary(scan_id: str, db: AsyncSession = Depends(get_db)) -> 
         correlated_totals=corr_totals,
         evidence_levels=evidence_levels,
         scanner_runs=scanner_runs,
+        actionable_count=actionable_count,
+        false_positive_count=false_positive_count,
+        accepted_risk_count=accepted_risk_count,
+        accepted_by_design_count=accepted_by_design_count,
+        fixed_count=fixed_count,
     )
+
+
+@router.patch(
+    "/findings/{finding_id}/disposition",
+    response_model=DispositionResponse,
+)
+async def patch_finding_disposition(
+    finding_id: str,
+    payload: DispositionRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    finding = await db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+
+    if payload.status not in ALLOWED_DISPOSITIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status. Allowed: {sorted(s.value for s in ALLOWED_DISPOSITIONS)}",
+        )
+
+    if payload.expires_at is not None and payload.expires_at <= datetime.now(UTC):
+        raise HTTPException(status_code=422, detail="expires_at must be in the future")
+
+    updated_finding, disposition, event, new_risk_gate = await set_disposition(
+        session=db,
+        finding=finding,
+        new_status=payload.status,
+        justification=payload.justification,
+        actor=payload.actor,
+        expires_at=payload.expires_at,
+    )
+    await db.commit()
+    await db.refresh(updated_finding)
+
+    scan = await db.get(Scan, updated_finding.scan_id)
+
+    return {
+        "finding_id": updated_finding.id,
+        "status": updated_finding.status,
+        "justification": payload.justification,
+        "actor": payload.actor,
+        "expires_at": payload.expires_at,
+        "updated_at": event.created_at,
+        "scan_id": updated_finding.scan_id,
+        "scan_risk_gate": scan.risk_gate if scan else None,
+    }
+
+
+@router.get(
+    "/findings/{finding_id}/disposition-history",
+    response_model=list[DispositionEventResponse],
+)
+async def get_finding_disposition_history(
+    finding_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> list:
+    finding = await db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    scan = await db.get(Scan, finding.scan_id)
+    if scan:
+        await resolve_expired_dispositions(db, scan.project_id)
+        await db.commit()
+    return await get_disposition_history(db, finding_id)
+
+
+@router.get(
+    "/findings/{finding_id}/disposition",
+    response_model=CurrentDispositionResponse | None,
+)
+async def get_finding_current_disposition(
+    finding_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    finding = await db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    scan = await db.get(Scan, finding.scan_id)
+    if scan:
+        await resolve_expired_dispositions(db, scan.project_id)
+        await db.commit()
+        await db.refresh(finding)
+    disp = await get_finding_disposition(db, finding)
+    if disp is None:
+        return None
+    return disp

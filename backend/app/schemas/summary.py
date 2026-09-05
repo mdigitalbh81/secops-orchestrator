@@ -22,6 +22,11 @@ class ScanSummary(BaseModel):
     correlated_totals: SeverityTotals = Field(default_factory=SeverityTotals)
     evidence_levels: dict[str, int] = Field(default_factory=dict)
     scanner_runs: dict[str, str]
+    actionable_count: int = 0
+    false_positive_count: int = 0
+    accepted_risk_count: int = 0
+    accepted_by_design_count: int = 0
+    fixed_count: int = 0
 
 
 class EvidenceSummary(BaseModel):

@@ -1,4 +1,10 @@
 from app.schemas.correlation import CorrelationGroupResponse
+from app.schemas.disposition import (
+    CurrentDispositionResponse,
+    DispositionEventResponse,
+    DispositionRequest,
+    DispositionResponse,
+)
 from app.schemas.finding import EvidenceResponse, FindingResponse
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.scan import ScanCreate, ScanResponse
@@ -17,4 +23,8 @@ __all__ = [
     "SeverityTotals",
     "ScanSummary",
     "EvidenceSummary",
+    "DispositionRequest",
+    "DispositionResponse",
+    "DispositionEventResponse",
+    "CurrentDispositionResponse",
 ]

@@ -27,6 +27,10 @@ from app.security.runner import RunnerConfig, redact_secrets, validate_path
 from app.services.confidence import adjust_confidence
 from app.services.correlation import correlate_findings
 from app.services.dedup import deduplicate_findings
+from app.services.finding_disposition import (
+    apply_dispositions_to_findings,
+    resolve_dispositions_batch,
+)
 from app.services.risk_engine import compute_risk_gate
 from app.services.stack_detector import detect_applicable_scanners
 from app.services.target_discovery import ScanTarget, discover_scan_targets
@@ -147,6 +151,7 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
     if scan is None:
         logger.error("Scan %s not found", scan_id)
         return
+    project_id = scan.project_id
 
     scan.status = ScanStatus.RUNNING
     await session.commit()
@@ -317,6 +322,14 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
             cg.confidence = max(cg.confidence, max(f.confidence for f in cg.findings))
 
     # 4. Risk gate evaluation
+    # 3b. Apply persistent dispositions (carryover from prior decisions)
+    disp_keys = [(f.scanner_name, f.normalized_fingerprint) for f in deduped]
+    dispositions = await resolve_dispositions_batch(
+        session, project_id, disp_keys
+    )
+    apply_dispositions_to_findings(deduped, dispositions)
+
+    # 4. Risk gate evaluation (only actionable findings)
     risk_gate = compute_risk_gate(deduped)
 
     # 5. Persist correlation groups and findings
@@ -356,8 +369,9 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
                 fixed_version=nf.fixed_version,
                 url=nf.url,
                 raw_fingerprint=nf.raw_fingerprint,
-                normalized_fingerprint=nf.normalized_fingerprint,
-            )
+                    normalized_fingerprint=nf.normalized_fingerprint,
+                    status=nf.status,
+                )
             session.add(finding)
             await session.flush()
 

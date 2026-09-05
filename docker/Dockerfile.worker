@@ -54,10 +54,8 @@ RUN addgroup --system --gid 1000 secops \
     && chown -R secops:secops /tmp/secops-workspaces \
     && chown -R secops:secops /home/secops
 
-COPY backend/pyproject.toml /app/
-RUN pip install --no-cache-dir .
-
 COPY backend /app
+RUN pip install --no-cache-dir . && rm -rf /app/*.egg-info /app/build
 
 USER secops
 

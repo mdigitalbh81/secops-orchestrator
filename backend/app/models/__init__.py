@@ -1,4 +1,5 @@
 from app.models.correlation import CorrelationGroup
+from app.models.disposition import FindingDisposition, FindingDispositionEvent
 from app.models.enums import (
     EvidenceLevel,
     FindingStatus,
@@ -25,4 +26,6 @@ __all__ = [
     "Finding",
     "FindingEvidence",
     "CorrelationGroup",
+    "FindingDisposition",
+    "FindingDispositionEvent",
 ]

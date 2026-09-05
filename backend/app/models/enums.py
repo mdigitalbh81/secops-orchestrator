@@ -15,6 +15,7 @@ class Severity(enum.StrEnum):
 class FindingStatus(enum.StrEnum):
     OPEN = "OPEN"
     ACCEPTED_RISK = "ACCEPTED_RISK"
+    ACCEPTED_BY_DESIGN = "ACCEPTED_BY_DESIGN"
     FALSE_POSITIVE = "FALSE_POSITIVE"
     FIXED = "FIXED"
 

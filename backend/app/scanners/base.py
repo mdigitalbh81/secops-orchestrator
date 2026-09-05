@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.models.enums import EvidenceLevel, Severity
+from app.models.enums import EvidenceLevel, FindingStatus, Severity
 from app.security.runner import RunnerConfig, RunResult, run_command
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ class NormalizedFinding:
     raw_fingerprint: str = ""
     normalized_fingerprint: str = ""
     evidences: list[dict] = field(default_factory=list)
+    status: FindingStatus = FindingStatus.OPEN
 
     def __post_init__(self) -> None:
         if not self.evidences and self.raw_data is not None:

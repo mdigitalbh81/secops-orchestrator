@@ -20,6 +20,9 @@ dependencies = [
     "httpx>=0.27,<1",
 ]
 
+[project.scripts]
+secops = "app.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2,<9",

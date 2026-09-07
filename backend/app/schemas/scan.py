@@ -4,13 +4,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import RiskGate, ScanStatus
+from app.models.enums import RiskGate, ScanMode, ScanStatus
 
 
 class ScanCreate(BaseModel):
     project_id: str
-    source_path: str
+    source_path: str | None = None
     target_url: str | None = None
+    scan_mode: ScanMode = ScanMode.SOURCE
 
 
 class ScanResponse(BaseModel):
@@ -18,8 +19,9 @@ class ScanResponse(BaseModel):
 
     id: str
     project_id: str
-    source_path: str
+    source_path: str | None = None
     target_url: str | None = None
+    scan_mode: ScanMode = ScanMode.SOURCE
     status: ScanStatus
     risk_gate: RiskGate | None = None
     error_message: str | None = None

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from app.models.enums import EvidenceLevel, Severity
@@ -84,3 +85,75 @@ def test_zap_no_cwe_not_invented():
     assert len(findings) == 1
     assert findings[0].cwe is None  # Must NOT invent CWE
     assert findings[0].severity == Severity.LOW
+
+
+def test_zap_filters_internal_tool_diagnostics():
+    scanner = ZapScanner()
+    raw = [
+        {
+            "alert": "ZAP Out of Date",
+            "name": "ZAP Out of Date",
+            "riskcode": "2",
+            "confidence": "2",
+            "pluginid": "10116",
+            "alertRef": "10116",
+            "cweid": "1104",
+            "url": "https://target.example.com/static/style.css",
+        },
+        {
+            "alert": "ZAP is Out of Date",
+            "name": "ZAP is Out of Date",
+            "riskcode": "2",
+            "confidence": "2",
+            "pluginid": "10116",
+            "alertRef": "10116",
+            "cweid": "1104",
+            "url": "https://target.example.com/static/style.css",
+        },
+        {
+            "alert": "Content Security Policy (CSP) Header Not Set",
+            "name": "Content Security Policy (CSP) Header Not Set",
+            "riskcode": "2",
+            "confidence": "3",
+            "pluginid": "10038",
+            "cweid": "693",
+            "url": "https://target.example.com/",
+        },
+        {
+            "alert": "Missing Anti-clickjacking Header",
+            "name": "Missing Anti-clickjacking Header",
+            "riskcode": "2",
+            "confidence": "2",
+            "pluginid": "10020",
+            "cweid": "1021",
+            "url": "https://target.example.com/",
+        },
+        {
+            "alert": "X-Content-Type-Options Header Missing",
+            "name": "X-Content-Type-Options Header Missing",
+            "riskcode": "1",
+            "confidence": "2",
+            "pluginid": "10021",
+            "cweid": "693",
+            "url": "https://target.example.com/static/style.css",
+        },
+    ]
+
+    findings = scanner.normalize_findings(raw)
+    titles = [f.title for f in findings]
+
+    assert "ZAP Out of Date" not in titles
+    assert "ZAP is Out of Date" not in titles
+    assert "Content Security Policy (CSP) Header Not Set" in titles
+    assert "Missing Anti-clickjacking Header" in titles
+    assert "X-Content-Type-Options Header Missing" in titles
+    assert len(findings) == 3
+
+    parsed = scanner.parse_result(RunResult(return_code=0, stdout=json.dumps({"alerts": raw}), stderr=""))
+    parsed_alerts = [a.get("alert") for a in parsed]
+    assert "ZAP Out of Date" not in parsed_alerts
+    assert "ZAP is Out of Date" not in parsed_alerts
+    assert "Content Security Policy (CSP) Header Not Set" in parsed_alerts
+    assert "Missing Anti-clickjacking Header" in parsed_alerts
+    assert "X-Content-Type-Options Header Missing" in parsed_alerts
+    assert len(parsed) == 3

@@ -330,3 +330,64 @@ async def test_partial_scanner_run_in_summary_and_runs_api(
     sum_data = res_sum.json()
     assert sum_data["scanner_runs"]["npm-audit"] == "partial"
     assert sum_data["scanner_runs"]["semgrep"] == "completed"
+
+
+async def test_list_and_get_projects_api(client: AsyncClient) -> None:
+    # Create 2 projects
+    p1_res = await client.post(
+        "/api/projects",
+        json={"name": "Alpha Repo", "repository_url": "https://github.com/org/alpha.git"},
+    )
+    assert p1_res.status_code == 201
+    p1_id = p1_res.json()["id"]
+
+    p2_res = await client.post(
+        "/api/projects",
+        json={"name": "Beta Repo", "repository_url": "https://github.com/org/beta.git"},
+    )
+    assert p2_res.status_code == 201
+    p2_id = p2_res.json()["id"]
+
+    # List all
+    list_res = await client.get("/api/projects")
+    assert list_res.status_code == 200
+    all_projs = list_res.json()
+    assert any(p["id"] == p1_id for p in all_projs)
+    assert any(p["id"] == p2_id for p in all_projs)
+
+    # Filter by name
+    by_name = await client.get("/api/projects?name=Alpha+Repo")
+    assert by_name.status_code == 200
+    assert len(by_name.json()) == 1
+    assert by_name.json()[0]["id"] == p1_id
+
+    # Filter by repository_url
+    by_url = await client.get("/api/projects?repository_url=https://github.com/org/beta.git")
+    assert by_url.status_code == 200
+    assert len(by_url.json()) == 1
+    assert by_url.json()[0]["id"] == p2_id
+
+    # Get single project
+    get_res = await client.get(f"/api/projects/{p1_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == p1_id
+
+    # Get nonexistent project 404
+    get_404 = await client.get("/api/projects/00000000-0000-0000-0000-000000000000")
+    assert get_404.status_code == 404
+
+
+async def test_list_project_scans_newest_first(client: AsyncClient, tmp_path) -> None:
+    proj_res = await client.post("/api/projects", json={"name": "Scans Order Test"})
+    project_id = proj_res.json()["id"]
+
+    with patch("app.api.routes.enqueue_scan"):
+        s1 = (await client.post("/api/scans", json={"project_id": project_id, "source_path": str(tmp_path)})).json()
+        s2 = (await client.post("/api/scans", json={"project_id": project_id, "source_path": str(tmp_path)})).json()
+
+    scans_res = await client.get(f"/api/projects/{project_id}/scans?limit=10")
+    assert scans_res.status_code == 200
+    scans = scans_res.json()
+    assert len(scans) == 2
+    assert scans[0]["id"] == s2["id"]
+    assert scans[1]["id"] == s1["id"]

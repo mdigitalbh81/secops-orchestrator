@@ -257,6 +257,82 @@ Services exposed:
 
 ---
 
+## CLI (SecOps Local Operator)
+
+The `secops` CLI provides an automated, developer-friendly interface to audit repositories, inspect scan reports, filter findings, and check stack health without manual API or Docker calls.
+
+### Installation
+
+```bash
+./scripts/install-cli.sh
+```
+Or execute directly from the repository root via `./secops`.
+
+### Usage
+
+#### Source audit
+
+```bash
+# Audit source code and dependencies of a local repository
+secops audit ~/projetos/meu-app
+```
+
+Analyzes committed source code and dependencies using static scanners (Semgrep, CodeQL, npm-audit, pip-audit, Trivy).
+
+#### Source + DAST
+
+```bash
+# Audit source code AND scan a running application
+secops audit ~/projetos/meu-app \
+  --url https://app.example.com
+```
+
+Analyzes source code/dependencies **and** runs DAST scanners (ZAP, Nuclei) against the target URL.
+
+#### DAST only
+
+```bash
+# Scan only a running application by URL (no source code required)
+secops dast https://app.example.com
+```
+
+Runs **only** DAST scanners (ZAP and Nuclei) against the target URL. Does not require a local repository, Git, or source code.
+
+```bash
+# Additional examples
+secops dast https://app.example.com --json
+secops dast https://app.example.com --project-id <uuid>
+```
+
+#### Other commands
+
+```bash
+# Check infrastructure health
+secops doctor
+
+# View the latest scan report
+secops report
+
+# View actionable findings filtered by severity
+secops findings --severity medium
+
+# Filter findings by scanner
+secops findings --scanner zap
+secops findings --scanner nuclei
+```
+
+### Key Operational Behaviors
+
+- **Committed HEAD only**: `audit` uses `git archive HEAD`; uncommitted working tree changes and stashes never enter the scan snapshot.
+
+- **Project reuse & Carryover**: Dispositions persist per `project_id`. CLI automatically resolves and reuses existing project by repository remote URL or directory name. DAST-only projects are identified by normalized hostname (e.g., `DAST: app.example.com`).
+
+- **DAST Security**: Target URLs are validated by the backend domain/private-IP allowlist (`SECOPS_DAST_ALLOWED_HOSTS`). The target must be a system you own and are authorized to test.
+
+- **DAST mode**: ZAP runs in baseline (non-destructive) mode. Nuclei uses default safe templates. Neither performs active exploitation, brute force, or destructive fuzzing. DAST scans are currently unauthenticated unless custom scanner configuration supports authentication.
+
+- **Production caution**: While scans are non-destructive by default, exercise appropriate caution when targeting production systems.
+
 ## Running Tests
 
 Execute the automated test suite with coverage and linting:

@@ -8,7 +8,7 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.enums import RiskGate, ScanStatus
+from app.models.enums import RiskGate, ScanMode, ScanStatus
 
 
 class Scan(Base):
@@ -16,8 +16,11 @@ class Scan(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
-    source_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scan_mode: Mapped[ScanMode] = mapped_column(
+        SAEnum(ScanMode, native_enum=False), default=ScanMode.SOURCE
+    )
     status: Mapped[ScanStatus] = mapped_column(
         SAEnum(ScanStatus, native_enum=False), default=ScanStatus.PENDING
     )

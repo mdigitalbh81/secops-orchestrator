@@ -3,6 +3,12 @@ from __future__ import annotations
 import enum
 
 
+class ScanMode(enum.StrEnum):
+    SOURCE = "SOURCE"
+    SOURCE_AND_DAST = "SOURCE_AND_DAST"
+    DAST_ONLY = "DAST_ONLY"
+
+
 class Severity(enum.StrEnum):
     CRITICAL = "CRITICAL"
     HIGH = "HIGH"

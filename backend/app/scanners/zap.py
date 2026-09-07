@@ -51,6 +51,24 @@ CONFIDENCE_MAP: dict[str, float] = {
     "falsepositive": 0.20,
 }
 
+ZAP_INTERNAL_ALERT_NAMES: frozenset[str] = frozenset({
+    "zap out of date",
+    "zap is out of date",
+})
+ZAP_INTERNAL_PLUGIN_IDS: frozenset[str] = frozenset({
+    "10116",
+})
+
+
+def _is_internal_alert(item: dict) -> bool:
+    title = str(item.get("alert") or item.get("name") or "").strip().lower()
+    if title in ZAP_INTERNAL_ALERT_NAMES:
+        return True
+    plugin_id = str(
+        item.get("pluginId") or item.get("pluginid") or item.get("alertRef") or ""
+    ).strip().split("-")[0]
+    return plugin_id in ZAP_INTERNAL_PLUGIN_IDS
+
 
 class ZapScanner(ScannerAdapter):
     """OWASP ZAP passive/baseline scanner integration."""
@@ -217,13 +235,13 @@ class ZapScanner(ScannerAdapter):
         elif isinstance(data, list):
             raw_alerts.extend(data)
 
-        return raw_alerts
+        return [a for a in raw_alerts if isinstance(a, dict) and not _is_internal_alert(a)]
 
     def normalize_findings(self, raw_findings: list[dict]) -> list[NormalizedFinding]:
         """Convert raw ZAP alerts to NormalizedFinding instances."""
         findings: list[NormalizedFinding] = []
         for item in raw_findings:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or _is_internal_alert(item):
                 continue
 
             title = item.get("alert") or item.get("name") or "ZAP Alert"

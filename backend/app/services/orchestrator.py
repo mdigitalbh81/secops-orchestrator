@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.correlation import CorrelationGroup
-from app.models.enums import ScannerRunStatus, ScanStatus
+from app.models.enums import ScanMode, ScannerRunStatus, ScanStatus
 from app.models.finding import Finding, FindingEvidence
 from app.models.scan import Scan
 from app.models.scanner_run import ScannerRun
@@ -158,24 +158,43 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
 
     settings = get_settings()
 
-    try:
-        project_path = validate_path(Path(scan.source_path), [settings.allowed_workspace_root])
-    except Exception as exc:
-        scan.status = ScanStatus.FAILED
-        scan.error_message = f"Invalid source path: {exc}"
-        scan.completed_at = datetime.now(UTC)
-        await session.commit()
-        return
+    is_dast_only = scan.scan_mode == ScanMode.DAST_ONLY
 
-    if not project_path.is_dir():
-        scan.status = ScanStatus.FAILED
-        scan.error_message = f"Source path does not exist: {scan.source_path}"
-        scan.completed_at = datetime.now(UTC)
-        await session.commit()
-        return
+    if is_dast_only:
+        # DAST-only scans use a minimal temp workspace; no source code needed
+        import tempfile
+        project_path = Path(tempfile.mkdtemp(prefix="secops-dast-"))
+    else:
+        try:
+            project_path = validate_path(
+                Path(scan.source_path), [settings.allowed_workspace_root]
+            )
+        except Exception as exc:
+            scan.status = ScanStatus.FAILED
+            scan.error_message = f"Invalid source path: {exc}"
+            scan.completed_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        if not project_path.is_dir():
+            scan.status = ScanStatus.FAILED
+            scan.error_message = f"Source path does not exist: {scan.source_path}"
+            scan.completed_at = datetime.now(UTC)
+            await session.commit()
+            return
 
     scanners = get_all_scanners()
     detection = await detect_applicable_scanners(project_path, scanners, target_url=scan.target_url)
+
+    # Define which scanners are DAST-only compatible (runtime scanners)
+    _dast_only_scanners = frozenset({"zap", "nuclei"})
+
+    # For DAST_ONLY scans, force all source scanners to NOT_APPLICABLE
+    if is_dast_only:
+        for scanner_name_key, info in detection.items():
+            if scanner_name_key not in _dast_only_scanners:
+                info["applicable"] = False
+
 
     # Discover monorepo & DAST targets
     targets = discover_scan_targets(project_path, target_url=scan.target_url)
@@ -395,3 +414,8 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
         len(correlation_groups),
         risk_gate.value,
     )
+
+    # Clean up temp workspace for DAST-only scans
+    if is_dast_only:
+        import shutil
+        shutil.rmtree(project_path, ignore_errors=True)

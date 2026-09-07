@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,15 +11,18 @@ import pytest
 from app.cli import (
     ApiClient,
     build_parser,
+    cmd_audit,
     cmd_dast,
     cmd_findings,
     cmd_report,
     load_state,
     main,
     normalize_dast_hostname,
+    preflight_check,
     resolve_dast_project,
     save_state,
 )
+from tests.test_cli import _init_test_git_repo
 
 
 @pytest.fixture(autouse=True)
@@ -93,29 +97,132 @@ def test_dast_https_accepted() -> None:
 # ---------- 6. DAST-only does not require path ----------
 
 
-def test_dast_no_git_no_path() -> None:
-    """dast command does not reference Git or project_path at all."""
+def test_dast_no_git_real_simulation() -> None:
+    """dast command genuinely succeeds on a system where git binary does not exist in PATH.
+    Real preflight_check runs without being mocked.
+    """
     api = MagicMock(spec=ApiClient)
     api.get.side_effect = lambda path, query_params=None: {
+        "/health": {"status": "ok"},
         "/api/projects": [{"id": "pid-1", "name": "DAST: app.example.com"}],
         "/api/scans/sid-1": {"id": "sid-1", "status": "COMPLETED", "risk_gate": "PASS"},
         "/api/scans/sid-1/summary": {
-            "scan_id": "sid-1", "status": "COMPLETED", "risk_gate": "PASS",
+            "scan_id": "sid-1",
+            "status": "COMPLETED",
+            "risk_gate": "PASS",
             "totals": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
             "scanner_runs": {"zap": "completed", "nuclei": "completed"},
         },
     }.get(path, [])
     api.post.return_value = {"id": "sid-1"}
 
-    with patch("app.cli.preflight_check", return_value=(True, "OK")):
+    def mock_subprocess(cmd, *args, **kwargs):
+        if cmd[0] == "git":
+            raise FileNotFoundError("No such file or directory: 'git'")
+        if cmd[0] == "docker" and cmd[1] == "--version":
+            return subprocess.CompletedProcess(cmd, 0, "Docker version 27.0.0\n", "")
+        if cmd[0] == "docker" and cmd[1] == "info":
+            return subprocess.CompletedProcess(cmd, 0, "Server Version: 27.0.0\n", "")
+        if cmd[0] == "docker" and "ps" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "worker-container-id\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("subprocess.run", side_effect=mock_subprocess) as mock_sub:
         args = build_parser().parse_args(["dast", "https://app.example.com"])
+        # preflight_check is NOT mocked! Real preflight runs with require_git=False
         code = cmd_dast(args, api)
-    assert code == 0
-    # Verify no git or path-related calls
-    post_call = api.post.call_args
-    body = post_call[1].get("body") or post_call[0][1] if len(post_call[0]) > 1 else post_call[1]["body"]
-    assert "source_path" not in body or body.get("source_path") is None
-    assert body["scan_mode"] == "DAST_ONLY"
+        assert code == 0
+
+        # Assert git was never executed during DAST command
+        git_calls = [c for c in mock_sub.call_args_list if c[0][0][0] == "git"]
+        assert len(git_calls) == 0, f"Git should not be called, but was: {git_calls}"
+
+        # Assert payload has scan_mode DAST_ONLY and no source_path
+        post_call = api.post.call_args
+        body = post_call[1].get("body") or post_call[0][1] if len(post_call[0]) > 1 else post_call[1]["body"]
+        assert "source_path" not in body or body.get("source_path") is None
+        assert body["scan_mode"] == "DAST_ONLY"
+
+
+def test_preflight_check_git_optional_for_dast() -> None:
+    """preflight_check requires git only when require_git=True."""
+    api = MagicMock(spec=ApiClient)
+    api.get.return_value = {"status": "ok"}
+
+    def mock_sub_no_git(cmd, *args, **kwargs):
+        if cmd[0] == "git":
+            raise FileNotFoundError("No such file or directory: 'git'")
+        if cmd[0] == "docker" and cmd[1] == "--version":
+            return subprocess.CompletedProcess(cmd, 0, "Docker version 27.0.0\n", "")
+        if cmd[0] == "docker" and cmd[1] == "info":
+            return subprocess.CompletedProcess(cmd, 0, "Server Version: 27.0.0\n", "")
+        if cmd[0] == "docker" and "ps" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "worker-id\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("subprocess.run", side_effect=mock_sub_no_git):
+        # DAST mode: require_git=False -> passes without git
+        ok, msg = preflight_check(api, auto_start=False, require_git=False)
+        assert ok is True
+        assert "Preflight checks passed" in msg
+
+        # Audit mode: require_git=True -> fails when git is absent
+        ok, msg = preflight_check(api, auto_start=False, require_git=True)
+        assert ok is False
+        assert "Git is not installed" in msg
+
+
+def test_cli_payload_modes_explicit(tmp_path: Path) -> None:
+    """Explicitly verifies payloads for SOURCE, SOURCE_AND_DAST, and DAST_ONLY."""
+    repo_dir = tmp_path / "payload_test_repo"
+    repo_dir.mkdir()
+    _init_test_git_repo(repo_dir)
+
+    api = MagicMock(spec=ApiClient)
+    api.get.side_effect = lambda path, query_params=None: {
+        "/health": {"status": "ok"},
+        "/api/projects": [{"id": "pid-test", "name": "payload_test_repo"}],
+        "/api/scans/sid-test": {"id": "sid-test", "status": "COMPLETED", "risk_gate": "PASS"},
+        "/api/scans/sid-test/summary": {
+            "scan_id": "sid-test",
+            "status": "COMPLETED",
+            "risk_gate": "PASS",
+            "totals": {},
+            "scanner_runs": {},
+        },
+    }.get(path, [])
+    api.post.return_value = {"id": "sid-test"}
+
+    with patch("app.cli.deploy_snapshot"),          patch("app.cli.preflight_check", return_value=(True, "OK")):
+        # 1. secops audit <path> sends scan_mode SOURCE
+        args_audit = build_parser().parse_args(["audit", str(repo_dir)])
+        code1 = cmd_audit(args_audit, api)
+        assert code1 == 0
+        body1 = api.post.call_args[1]["body"]
+        assert body1["scan_mode"] == "SOURCE"
+        assert "target_url" not in body1
+        assert body1["project_id"] == "pid-test"
+        assert body1["source_path"]
+
+        # 2. secops audit <path> --url https://app.example.com sends scan_mode SOURCE_AND_DAST
+        args_audit_dast = build_parser().parse_args(["audit", str(repo_dir), "--url", "https://app.example.com"])
+        code2 = cmd_audit(args_audit_dast, api)
+        assert code2 == 0
+        body2 = api.post.call_args[1]["body"]
+        assert body2["scan_mode"] == "SOURCE_AND_DAST"
+        assert body2["target_url"] == "https://app.example.com"
+        assert body2["project_id"] == "pid-test"
+        assert body2["source_path"]
+
+        # 3. secops dast https://app.example.com sends scan_mode DAST_ONLY
+        args_dast = build_parser().parse_args(["dast", "https://app.example.com"])
+        code3 = cmd_dast(args_dast, api)
+        assert code3 == 0
+        body3 = api.post.call_args[1]["body"]
+        assert body3["scan_mode"] == "DAST_ONLY"
+        assert body3["target_url"] == "https://app.example.com"
+        assert body3["project_id"] == "pid-test"
+        assert "source_path" not in body3
 
 
 # ---------- 7. Stable project resolution by hostname ----------

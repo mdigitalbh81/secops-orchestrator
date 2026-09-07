@@ -450,15 +450,20 @@ def deploy_snapshot(
         raise RuntimeError(f"Snapshot extraction in worker failed: {tar_err.decode(errors='replace').strip()}")
 
 
-def preflight_check(api: ApiClient, auto_start: bool = True) -> tuple[bool, str]:
+def preflight_check(
+    api: ApiClient,
+    auto_start: bool = True,
+    require_git: bool = True,
+) -> tuple[bool, str]:
     """Verify git, docker, docker daemon, api, and worker."""
     # 1. Git
-    try:
-        res = subprocess.run(["git", "--version"], capture_output=True, text=True)
-        if res.returncode != 0:
-            return False, "Git command returned non-zero. Please verify git installation."
-    except FileNotFoundError:
-        return False, "Git is not installed or not available in PATH."
+    if require_git:
+        try:
+            res = subprocess.run(["git", "--version"], capture_output=True, text=True)
+            if res.returncode != 0:
+                return False, "Git command returned non-zero. Please verify git installation."
+        except FileNotFoundError:
+            return False, "Git is not installed or not available in PATH."
 
     # 2. Docker
     try:
@@ -614,7 +619,7 @@ def cmd_dast(args: argparse.Namespace, api: ApiClient) -> int:
         return 1
 
     # Preflight check
-    ok, preflight_msg = preflight_check(api, auto_start=True)
+    ok, preflight_msg = preflight_check(api, auto_start=True, require_git=False)
     if not ok:
         sys.stderr.write(f"Error: {preflight_msg}\n")
         return 1
@@ -759,7 +764,7 @@ def cmd_audit(args: argparse.Namespace, api: ApiClient) -> int:
             print(msg.strip())
 
     # Preflight check
-    ok, preflight_msg = preflight_check(api, auto_start=True)
+    ok, preflight_msg = preflight_check(api, auto_start=True, require_git=True)
     if not ok:
         sys.stderr.write(f"Error: {preflight_msg}\n")
         return 1
@@ -793,9 +798,11 @@ def cmd_audit(args: argparse.Namespace, api: ApiClient) -> int:
         print("Starting scan...")
 
     # Create scan via API
+    scan_mode = "SOURCE_AND_DAST" if args.url else "SOURCE"
     scan_payload: dict[str, Any] = {
         "project_id": project_id,
         "source_path": internal_ws,
+        "scan_mode": scan_mode,
     }
     if args.url:
         scan_payload["target_url"] = args.url

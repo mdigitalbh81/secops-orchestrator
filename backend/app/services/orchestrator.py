@@ -159,11 +159,13 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
     settings = get_settings()
 
     is_dast_only = scan.scan_mode == ScanMode.DAST_ONLY
+    temp_dir_to_clean: Path | None = None
 
     if is_dast_only:
         # DAST-only scans use a minimal temp workspace; no source code needed
         import tempfile
         project_path = Path(tempfile.mkdtemp(prefix="secops-dast-"))
+        temp_dir_to_clean = project_path
     else:
         try:
             project_path = validate_path(
@@ -183,239 +185,240 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
             await session.commit()
             return
 
-    scanners = get_all_scanners()
-    detection = await detect_applicable_scanners(project_path, scanners, target_url=scan.target_url)
+    try:
+        scanners = get_all_scanners()
+        detection = await detect_applicable_scanners(project_path, scanners, target_url=scan.target_url)
 
-    # Define which scanners are DAST-only compatible (runtime scanners)
-    _dast_only_scanners = frozenset({"zap", "nuclei"})
+        # Define which scanners are DAST-only compatible (runtime scanners)
+        _dast_only_scanners = frozenset({"zap", "nuclei"})
 
-    # For DAST_ONLY scans, force all source scanners to NOT_APPLICABLE
-    if is_dast_only:
-        for scanner_name_key, info in detection.items():
-            if scanner_name_key not in _dast_only_scanners:
-                info["applicable"] = False
+        # For DAST_ONLY scans, force all source scanners to NOT_APPLICABLE
+        if is_dast_only:
+            for scanner_name_key, info in detection.items():
+                if scanner_name_key not in _dast_only_scanners:
+                    info["applicable"] = False
 
 
-    # Discover monorepo & DAST targets
-    targets = discover_scan_targets(project_path, target_url=scan.target_url)
+        # Discover monorepo & DAST targets
+        targets = discover_scan_targets(project_path, target_url=scan.target_url)
 
-    # Index targets by scanner name
-    targets_by_scanner: dict[str, list[ScanTarget]] = {}
-    for t in targets:
-        targets_by_scanner.setdefault(t.scanner_name, []).append(t)
+        # Index targets by scanner name
+        targets_by_scanner: dict[str, list[ScanTarget]] = {}
+        for t in targets:
+            targets_by_scanner.setdefault(t.scanner_name, []).append(t)
 
-    all_findings: list[NormalizedFinding] = []
+        all_findings: list[NormalizedFinding] = []
 
-    for scanner_name, info in detection.items():
-        scanner = info["scanner"]
-        applicable = info["applicable"]
-        available = info["available"]
+        for scanner_name, info in detection.items():
+            scanner = info["scanner"]
+            applicable = info["applicable"]
+            available = info["available"]
 
-        runner = ScannerRun(
-            scan_id=scan_id,
-            scanner_name=scanner_name,
-        )
-
-        if not applicable:
-            runner.status = ScannerRunStatus.NOT_APPLICABLE
-            session.add(runner)
-            continue
-
-        if not available:
-            runner.status = ScannerRunStatus.UNAVAILABLE
-            if scanner_name == "ai-appsec":
-                runner.error_message = "AI AppSec Reviewer is disabled or not configured"
-            else:
-                runner.error_message = f"{scanner_name} not installed"
-            session.add(runner)
-            continue
-
-        runner.status = ScannerRunStatus.RUNNING
-        session.add(runner)
-        await session.commit()
-
-        start_time = datetime.now(UTC)
-        scanner_targets = targets_by_scanner.get(scanner_name, [])
-
-        # For scanners with no discovered subtargets: fall back to project root
-        if not scanner_targets:
-            scanner_targets = [
-                ScanTarget(
-                    path=project_path,
-                    scanner_name=scanner_name,
-                    target_type="repository",
-                )
-            ]
-
-        config = RunnerConfig(
-            timeout=settings.scanner_timeout,
-            max_output_bytes=settings.scanner_max_output_bytes,
-            allowed_roots=[settings.allowed_workspace_root, project_path],
-        )
-
-        subtarget_results: list[dict] = []
-        scanner_findings: list[NormalizedFinding] = []
-        last_error: str | None = None
-
-        for target in scanner_targets:
-            (
-                findings,
-                error,
-                timed_out,
-                stdout,
-                stderr,
-                duration,
-            ) = await _execute_scanner_for_target(
-                scanner,
-                target,
-                project_path,
-                config,
-                target_url=scan.target_url,
-            )
-
-            subproject_str, manifest_str = _extract_target_provenance(target, project_path)
-            status_str = "TIMED_OUT" if timed_out else ("FAILED" if error else "COMPLETED")
-
-            max_stream_snip = 20000
-            stdout_snip = stdout[:max_stream_snip] if stdout else ""
-            stderr_snip = stderr[:max_stream_snip] if stderr else ""
-
-            subtarget_info = {
-                "target_path": str(target.path),
-                "target_type": target.target_type,
-                "subproject": subproject_str,
-                "manifest": manifest_str,
-                "status": status_str,
-                "findings_count": len(findings),
-                "duration_seconds": round(duration, 3),
-                "stdout": stdout_snip,
-                "stderr": stderr_snip,
-                "error": error,
-            }
-            subtarget_results.append(subtarget_info)
-
-            if error:
-                last_error = error
-            else:
-                scanner_findings.extend(findings)
-
-        all_findings.extend(scanner_findings)
-
-        # Store subtarget metadata in raw output for auditability
-        raw_output_obj = {"subtargets": subtarget_results}
-        runner.raw_output = json.dumps(raw_output_obj, default=str)[:100000]
-
-        total_targets = len(subtarget_results)
-        completed_targets = sum(1 for r in subtarget_results if r["status"] == "COMPLETED")
-        failed_targets = sum(1 for r in subtarget_results if r["status"] in ("FAILED", "TIMED_OUT"))
-
-        if total_targets == 0:
-            runner.status = ScannerRunStatus.COMPLETED
-        elif completed_targets == total_targets:
-            runner.status = ScannerRunStatus.COMPLETED
-            runner.error_message = None
-        elif failed_targets == total_targets:
-            runner.status = ScannerRunStatus.FAILED
-            runner.error_message = last_error or "All targets failed"
-        else:
-            runner.status = ScannerRunStatus.PARTIAL
-            runner.error_message = (
-                f"{failed_targets} of {total_targets} target(s) failed: {last_error}"
-            )
-
-        runner.completed_at = datetime.now(UTC)
-        runner.duration_seconds = (runner.completed_at - start_time).total_seconds()
-
-    # 1. Deterministic deduplication
-    deduped = deduplicate_findings(all_findings)
-
-    # 2. Intelligent cross-scanner correlation
-    correlation_groups = correlate_findings(deduped, scan_id)
-
-    # 3. Confidence scoring v2
-    deduped = adjust_confidence(deduped)
-
-    # Synchronize correlation group confidence with adjusted findings
-    for cg in correlation_groups:
-        if cg.findings:
-            cg.confidence = max(cg.confidence, max(f.confidence for f in cg.findings))
-
-    # 4. Risk gate evaluation
-    # 3b. Apply persistent dispositions (carryover from prior decisions)
-    disp_keys = [(f.scanner_name, f.normalized_fingerprint) for f in deduped]
-    dispositions = await resolve_dispositions_batch(
-        session, project_id, disp_keys
-    )
-    apply_dispositions_to_findings(deduped, dispositions)
-
-    # 4. Risk gate evaluation (only actionable findings)
-    risk_gate = compute_risk_gate(deduped)
-
-    # 5. Persist correlation groups and findings
-    for group_data in correlation_groups:
-        db_group = CorrelationGroup(
-            id=group_data.id,
-            scan_id=scan_id,
-            canonical_title=group_data.canonical_title,
-            canonical_cwe=group_data.canonical_cwe,
-            canonical_cve=group_data.canonical_cve,
-            severity=group_data.severity,
-            confidence=group_data.confidence,
-            evidence_level=group_data.evidence_level,
-            status=group_data.status,
-            remediation_recommendation=group_data.remediation_recommendation,
-        )
-        session.add(db_group)
-        await session.flush()
-
-        for nf in group_data.findings:
-            finding = Finding(
+            runner = ScannerRun(
                 scan_id=scan_id,
-                scanner_name=nf.scanner_name,
-                title=nf.title,
-                description=nf.description,
-                severity=nf.severity,
-                confidence=nf.confidence,
-                evidence_level=nf.evidence_level,
-                correlation_group_id=db_group.id,
-                cwe=nf.cwe,
-                cve=nf.cve,
-                file_path=nf.file_path,
-                line_start=nf.line_start,
-                line_end=nf.line_end,
-                package_name=nf.package_name,
-                installed_version=nf.installed_version,
-                fixed_version=nf.fixed_version,
-                url=nf.url,
-                raw_fingerprint=nf.raw_fingerprint,
-                    normalized_fingerprint=nf.normalized_fingerprint,
-                    status=nf.status,
+                scanner_name=scanner_name,
+            )
+
+            if not applicable:
+                runner.status = ScannerRunStatus.NOT_APPLICABLE
+                session.add(runner)
+                continue
+
+            if not available:
+                runner.status = ScannerRunStatus.UNAVAILABLE
+                if scanner_name == "ai-appsec":
+                    runner.error_message = "AI AppSec Reviewer is disabled or not configured"
+                else:
+                    runner.error_message = f"{scanner_name} not installed"
+                session.add(runner)
+                continue
+
+            runner.status = ScannerRunStatus.RUNNING
+            session.add(runner)
+            await session.commit()
+
+            start_time = datetime.now(UTC)
+            scanner_targets = targets_by_scanner.get(scanner_name, [])
+
+            # For scanners with no discovered subtargets: fall back to project root
+            if not scanner_targets:
+                scanner_targets = [
+                    ScanTarget(
+                        path=project_path,
+                        scanner_name=scanner_name,
+                        target_type="repository",
+                    )
+                ]
+
+            config = RunnerConfig(
+                timeout=settings.scanner_timeout,
+                max_output_bytes=settings.scanner_max_output_bytes,
+                allowed_roots=[settings.allowed_workspace_root, project_path],
+            )
+
+            subtarget_results: list[dict] = []
+            scanner_findings: list[NormalizedFinding] = []
+            last_error: str | None = None
+
+            for target in scanner_targets:
+                (
+                    findings,
+                    error,
+                    timed_out,
+                    stdout,
+                    stderr,
+                    duration,
+                ) = await _execute_scanner_for_target(
+                    scanner,
+                    target,
+                    project_path,
+                    config,
+                    target_url=scan.target_url,
                 )
-            session.add(finding)
+
+                subproject_str, manifest_str = _extract_target_provenance(target, project_path)
+                status_str = "TIMED_OUT" if timed_out else ("FAILED" if error else "COMPLETED")
+
+                max_stream_snip = 20000
+                stdout_snip = stdout[:max_stream_snip] if stdout else ""
+                stderr_snip = stderr[:max_stream_snip] if stderr else ""
+
+                subtarget_info = {
+                    "target_path": str(target.path),
+                    "target_type": target.target_type,
+                    "subproject": subproject_str,
+                    "manifest": manifest_str,
+                    "status": status_str,
+                    "findings_count": len(findings),
+                    "duration_seconds": round(duration, 3),
+                    "stdout": stdout_snip,
+                    "stderr": stderr_snip,
+                    "error": error,
+                }
+                subtarget_results.append(subtarget_info)
+
+                if error:
+                    last_error = error
+                else:
+                    scanner_findings.extend(findings)
+
+            all_findings.extend(scanner_findings)
+
+            # Store subtarget metadata in raw output for auditability
+            raw_output_obj = {"subtargets": subtarget_results}
+            runner.raw_output = json.dumps(raw_output_obj, default=str)[:100000]
+
+            total_targets = len(subtarget_results)
+            completed_targets = sum(1 for r in subtarget_results if r["status"] == "COMPLETED")
+            failed_targets = sum(1 for r in subtarget_results if r["status"] in ("FAILED", "TIMED_OUT"))
+
+            if total_targets == 0:
+                runner.status = ScannerRunStatus.COMPLETED
+            elif completed_targets == total_targets:
+                runner.status = ScannerRunStatus.COMPLETED
+                runner.error_message = None
+            elif failed_targets == total_targets:
+                runner.status = ScannerRunStatus.FAILED
+                runner.error_message = last_error or "All targets failed"
+            else:
+                runner.status = ScannerRunStatus.PARTIAL
+                runner.error_message = (
+                    f"{failed_targets} of {total_targets} target(s) failed: {last_error}"
+                )
+
+            runner.completed_at = datetime.now(UTC)
+            runner.duration_seconds = (runner.completed_at - start_time).total_seconds()
+
+        # 1. Deterministic deduplication
+        deduped = deduplicate_findings(all_findings)
+
+        # 2. Intelligent cross-scanner correlation
+        correlation_groups = correlate_findings(deduped, scan_id)
+
+        # 3. Confidence scoring v2
+        deduped = adjust_confidence(deduped)
+
+        # Synchronize correlation group confidence with adjusted findings
+        for cg in correlation_groups:
+            if cg.findings:
+                cg.confidence = max(cg.confidence, max(f.confidence for f in cg.findings))
+
+        # 4. Risk gate evaluation
+        # 3b. Apply persistent dispositions (carryover from prior decisions)
+        disp_keys = [(f.scanner_name, f.normalized_fingerprint) for f in deduped]
+        dispositions = await resolve_dispositions_batch(
+            session, project_id, disp_keys
+        )
+        apply_dispositions_to_findings(deduped, dispositions)
+
+        # 4. Risk gate evaluation (only actionable findings)
+        risk_gate = compute_risk_gate(deduped)
+
+        # 5. Persist correlation groups and findings
+        for group_data in correlation_groups:
+            db_group = CorrelationGroup(
+                id=group_data.id,
+                scan_id=scan_id,
+                canonical_title=group_data.canonical_title,
+                canonical_cwe=group_data.canonical_cwe,
+                canonical_cve=group_data.canonical_cve,
+                severity=group_data.severity,
+                confidence=group_data.confidence,
+                evidence_level=group_data.evidence_level,
+                status=group_data.status,
+                remediation_recommendation=group_data.remediation_recommendation,
+            )
+            session.add(db_group)
             await session.flush()
 
-            evidences_to_save = nf.evidences or ([nf.raw_data] if nf.raw_data else [])
-            for ev_data in evidences_to_save:
-                evidence = FindingEvidence(
-                    finding_id=finding.id,
+            for nf in group_data.findings:
+                finding = Finding(
+                    scan_id=scan_id,
                     scanner_name=nf.scanner_name,
-                    raw_data=ev_data,
-                )
-                session.add(evidence)
+                    title=nf.title,
+                    description=nf.description,
+                    severity=nf.severity,
+                    confidence=nf.confidence,
+                    evidence_level=nf.evidence_level,
+                    correlation_group_id=db_group.id,
+                    cwe=nf.cwe,
+                    cve=nf.cve,
+                    file_path=nf.file_path,
+                    line_start=nf.line_start,
+                    line_end=nf.line_end,
+                    package_name=nf.package_name,
+                    installed_version=nf.installed_version,
+                    fixed_version=nf.fixed_version,
+                    url=nf.url,
+                    raw_fingerprint=nf.raw_fingerprint,
+                        normalized_fingerprint=nf.normalized_fingerprint,
+                        status=nf.status,
+                    )
+                session.add(finding)
+                await session.flush()
 
-    scan.status = ScanStatus.COMPLETED
-    scan.risk_gate = risk_gate
-    scan.completed_at = datetime.now(UTC)
-    await session.commit()
-    logger.info(
-        "Scan %s completed: %d findings, %d correlation groups, risk_gate=%s",
-        scan_id,
-        len(deduped),
-        len(correlation_groups),
-        risk_gate.value,
-    )
+                evidences_to_save = nf.evidences or ([nf.raw_data] if nf.raw_data else [])
+                for ev_data in evidences_to_save:
+                    evidence = FindingEvidence(
+                        finding_id=finding.id,
+                        scanner_name=nf.scanner_name,
+                        raw_data=ev_data,
+                    )
+                    session.add(evidence)
 
-    # Clean up temp workspace for DAST-only scans
-    if is_dast_only:
-        import shutil
-        shutil.rmtree(project_path, ignore_errors=True)
+        scan.status = ScanStatus.COMPLETED
+        scan.risk_gate = risk_gate
+        scan.completed_at = datetime.now(UTC)
+        await session.commit()
+        logger.info(
+            "Scan %s completed: %d findings, %d correlation groups, risk_gate=%s",
+            scan_id,
+            len(deduped),
+            len(correlation_groups),
+            risk_gate.value,
+        )
+    finally:
+        if temp_dir_to_clean is not None:
+            import shutil
+
+            shutil.rmtree(temp_dir_to_clean, ignore_errors=True)

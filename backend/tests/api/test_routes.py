@@ -391,3 +391,116 @@ async def test_list_project_scans_newest_first(client: AsyncClient, tmp_path) ->
     assert len(scans) == 2
     assert scans[0]["id"] == s2["id"]
     assert scans[1]["id"] == s1["id"]
+
+
+async def test_create_scan_inferred_modes_backward_compat(client: AsyncClient, tmp_path) -> None:
+    """Legacy API callers omitting scan_mode have mode correctly inferred from fields."""
+    proj_res = await client.post("/api/projects", json={"name": "Inferred Mode Test"})
+    assert proj_res.status_code == 201
+    project_id = proj_res.json()["id"]
+
+    with patch("app.api.routes.enqueue_scan"):
+        # 1. source_path only -> SOURCE
+        res1 = await client.post(
+            "/api/scans",
+            json={"project_id": project_id, "source_path": str(tmp_path)},
+        )
+        assert res1.status_code == 202
+        assert res1.json()["scan_mode"] == "SOURCE"
+
+        # 2. source_path + target_url -> SOURCE_AND_DAST
+        res2 = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "source_path": str(tmp_path),
+                "target_url": "http://staging-app:3000",
+            },
+        )
+        assert res2.status_code == 202
+        assert res2.json()["scan_mode"] == "SOURCE_AND_DAST"
+
+        # 3. target_url only -> DAST_ONLY
+        res3 = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "target_url": "http://staging-app:3000",
+            },
+        )
+        assert res3.status_code == 202
+        assert res3.json()["scan_mode"] == "DAST_ONLY"
+
+        # 4. Neither source_path nor target_url -> 400
+        res4 = await client.post(
+            "/api/scans",
+            json={"project_id": project_id},
+        )
+        assert res4.status_code == 400
+        assert "Either source_path or target_url" in res4.json()["detail"]
+
+
+async def test_create_scan_explicit_modes_validation(client: AsyncClient, tmp_path) -> None:
+    """Explicit scan_mode strictly validates required and disallowed fields."""
+    proj_res = await client.post("/api/projects", json={"name": "Explicit Mode Test"})
+    assert proj_res.status_code == 201
+    project_id = proj_res.json()["id"]
+
+    with patch("app.api.routes.enqueue_scan"):
+        # 1. SOURCE mode rejects target_url (prevents silent DAST execution)
+        res_source_with_url = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "source_path": str(tmp_path),
+                "target_url": "http://staging-app:3000",
+                "scan_mode": "SOURCE",
+            },
+        )
+        assert res_source_with_url.status_code == 400
+        assert "target_url is not permitted for SOURCE scans" in res_source_with_url.json()["detail"]
+
+        # 2. SOURCE mode requires source_path
+        res_source_no_path = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "scan_mode": "SOURCE",
+            },
+        )
+        assert res_source_no_path.status_code == 400
+        assert "source_path is required for SOURCE scans" in res_source_no_path.json()["detail"]
+
+        # 3. SOURCE_AND_DAST requires both source_path and target_url
+        res_both_no_url = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "source_path": str(tmp_path),
+                "scan_mode": "SOURCE_AND_DAST",
+            },
+        )
+        assert res_both_no_url.status_code == 400
+        assert "target_url is required for SOURCE_AND_DAST scans" in res_both_no_url.json()["detail"]
+
+        res_both_no_path = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "target_url": "http://staging-app:3000",
+                "scan_mode": "SOURCE_AND_DAST",
+            },
+        )
+        assert res_both_no_path.status_code == 400
+        assert "source_path is required for SOURCE_AND_DAST scans" in res_both_no_path.json()["detail"]
+
+        # 4. DAST_ONLY requires target_url
+        res_dast_no_url = await client.post(
+            "/api/scans",
+            json={
+                "project_id": project_id,
+                "scan_mode": "DAST_ONLY",
+            },
+        )
+        assert res_dast_no_url.status_code == 400
+        assert "target_url is required for DAST_ONLY scans" in res_dast_no_url.json()["detail"]

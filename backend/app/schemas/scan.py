@@ -11,7 +11,7 @@ class ScanCreate(BaseModel):
     project_id: str
     source_path: str | None = None
     target_url: str | None = None
-    scan_mode: ScanMode = ScanMode.SOURCE
+    scan_mode: ScanMode | None = None
 
 
 class ScanResponse(BaseModel):

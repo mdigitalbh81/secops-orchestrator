@@ -1,10 +1,19 @@
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import EvidenceLevel, RiskGate, ScannerRunStatus, ScanStatus, Severity
+from app.models.enums import (
+    EvidenceLevel,
+    RiskGate,
+    ScanMode,
+    ScannerRunStatus,
+    ScanStatus,
+    Severity,
+)
 from app.models.finding import Finding
 from app.models.project import Project
 from app.models.scan import Scan
@@ -341,3 +350,48 @@ async def test_zap_unavailable_does_not_abort_nuclei_and_sast(
     findings = list(res_f.scalars().all())
     assert len(findings) == 1
     assert findings[0].scanner_name == "nuclei"
+
+
+@pytest.mark.asyncio
+async def test_dast_temp_workspace_cleaned_up_on_exception(
+    db_session: AsyncSession,
+) -> None:
+    """DAST temp workspace is guaranteed to be cleaned up even if scan execution raises an exception."""
+    project = Project(name="DAST Cleanup Test")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(
+        project_id=project.id,
+        source_path=None,
+        target_url="http://staging-app:3000",
+        scan_mode=ScanMode.DAST_ONLY,
+    )
+    db_session.add(scan)
+    await db_session.commit()
+
+    created_temp_dirs: list[Path] = []
+    original_mkdtemp = tempfile.mkdtemp
+
+    def spy_mkdtemp(*args, **kwargs):
+        path_str = original_mkdtemp(*args, **kwargs)
+        created_temp_dirs.append(Path(path_str))
+        return path_str
+
+    with (
+        patch("tempfile.mkdtemp", side_effect=spy_mkdtemp),
+        patch("app.services.orchestrator.detect_applicable_scanners", side_effect=RuntimeError("Simulated unexpected failure")),
+        pytest.raises(RuntimeError, match="Simulated unexpected failure"),
+    ):
+        await run_scan(scan.id, db_session)
+
+    # Verify temp workspace was created
+    assert len(created_temp_dirs) == 1
+    temp_dir = created_temp_dirs[0]
+
+    # Verify temp workspace was cleaned up despite the exception
+    assert not temp_dir.exists(), f"Temp workspace {temp_dir} was not cleaned up after exception!"
+
+    # Verify scan was NOT marked COMPLETED
+    await db_session.refresh(scan)
+    assert scan.status != ScanStatus.COMPLETED

@@ -110,12 +110,48 @@ async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -
 
     settings = get_settings()
 
-    is_dast_only = payload.scan_mode == ScanMode.DAST_ONLY
+    # Determine scan_mode: backwards compatibility for calls omitting scan_mode
+    if "scan_mode" not in payload.model_fields_set or payload.scan_mode is None:
+        if payload.source_path and payload.target_url:
+            mode = ScanMode.SOURCE_AND_DAST
+        elif payload.source_path:
+            mode = ScanMode.SOURCE
+        elif payload.target_url:
+            mode = ScanMode.DAST_ONLY
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Either source_path or target_url must be provided",
+            )
+    else:
+        mode = payload.scan_mode
 
-    validated_path: str | None = None
-    if not is_dast_only:
+    # Validate required / disallowed fields per scan_mode
+    if mode == ScanMode.SOURCE:
         if not payload.source_path:
             raise HTTPException(status_code=400, detail="source_path is required for SOURCE scans")
+        if payload.target_url:
+            raise HTTPException(
+                status_code=400,
+                detail="target_url is not permitted for SOURCE scans; use SOURCE_AND_DAST instead",
+            )
+    elif mode == ScanMode.SOURCE_AND_DAST:
+        if not payload.source_path:
+            raise HTTPException(
+                status_code=400, detail="source_path is required for SOURCE_AND_DAST scans"
+            )
+        if not payload.target_url:
+            raise HTTPException(
+                status_code=400, detail="target_url is required for SOURCE_AND_DAST scans"
+            )
+    elif mode == ScanMode.DAST_ONLY:
+        if not payload.target_url:
+            raise HTTPException(
+                status_code=400, detail="target_url is required for DAST_ONLY scans"
+            )
+
+    validated_path: str | None = None
+    if payload.source_path and mode != ScanMode.DAST_ONLY:
         try:
             validated_path = str(
                 validate_path(Path(payload.source_path), [settings.allowed_workspace_root])
@@ -124,9 +160,7 @@ async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -
             raise HTTPException(status_code=400, detail=f"Invalid source_path: {exc}") from exc
 
     validated_target_url: str | None = None
-    if is_dast_only and not payload.target_url:
-        raise HTTPException(status_code=400, detail="target_url is required for DAST_ONLY scans")
-    if payload.target_url:
+    if payload.target_url and mode != ScanMode.SOURCE:
         try:
             validated_target_url = validate_dast_url(
                 payload.target_url,
@@ -140,7 +174,7 @@ async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -
         project_id=payload.project_id,
         source_path=validated_path,
         target_url=validated_target_url,
-        scan_mode=payload.scan_mode,
+        scan_mode=mode,
     )
     db.add(scan)
     await db.flush()

@@ -68,7 +68,7 @@ flowchart TD
 | **pip-audit** | SCA (Python dependencies) | `requirements.txt` or `pyproject.toml` | 0.7 (with CVE) / 0.5 |
 | **Trivy** | Container / FS / Config | `Dockerfile` | 0.7 (with CVE) / 0.5 |
 
-> **CodeQL Integration (Optional)**: CodeQL is an optional third-party integration. SecOps Orchestrator does not distribute or install GitHub CodeQL CLI. SecOps checks whether `codeql` is available in `PATH`; if not found, it reports the scanner run status as `UNAVAILABLE` and the overall scan continues normally. Users who choose to install and enable CodeQL are solely responsible for obtaining any required license and ensuring their use complies with [GitHub's CodeQL Terms and Conditions](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md). See [Setting up the CodeQL CLI](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli) for official installation documentation. SecOps Orchestrator grants no rights to use CodeQL.
+> **CodeQL Integration (Optional)**: CodeQL is an optional third-party integration. SecOps Orchestrator does not distribute or install GitHub CodeQL CLI. SecOps checks whether `codeql` is available in the worker execution environment's `PATH`; if not found, it reports the scanner run status as `UNAVAILABLE` and the overall scan continues normally. Users who choose to install and enable CodeQL are solely responsible for obtaining any required license and ensuring their use complies with [GitHub's CodeQL Terms and Conditions](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md). See [Setting up the CodeQL CLI](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli) for official installation documentation. SecOps Orchestrator grants no rights to use CodeQL.
 
 ---
 
@@ -280,7 +280,7 @@ Or execute directly from the repository root via `./secops`.
 secops audit ~/projetos/meu-app
 ```
 
-Analyzes committed source code and dependencies using static scanners (Semgrep, CodeQL [optional, if available in PATH], npm-audit, pip-audit, Trivy).
+Analyzes committed source code and dependencies using static scanners (Semgrep, CodeQL [optional, if available in the worker execution environment's PATH], npm-audit, pip-audit, Trivy).
 
 #### Source + DAST
 

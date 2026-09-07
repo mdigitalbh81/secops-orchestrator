@@ -143,3 +143,61 @@ async def test_codeql_execute_workflow(tmp_path: Path):
         assert res.return_code == 0
         parsed = json.loads(res.stdout)
         assert len(parsed.get("runs", [])) > 0
+
+
+@pytest.mark.asyncio
+async def test_codeql_absent_in_scan_records_unavailable(
+    db_session,
+    tmp_path: Path,
+    semgrep_json: str,
+):
+    from sqlalchemy import select
+
+    from app.models.enums import ScannerRunStatus, ScanStatus
+    from app.models.project import Project
+    from app.models.scan import Scan
+    from app.models.scanner_run import ScannerRun
+    from app.services.orchestrator import run_scan
+
+    proj_dir = tmp_path / "codeql_absent_project"
+    proj_dir.mkdir()
+    (proj_dir / "main.py").write_text("print('hello')", encoding="utf-8")
+
+    project = Project(name="CodeQL Absent Project")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(project_id=project.id, source_path=str(proj_dir))
+    db_session.add(scan)
+    await db_session.commit()
+
+    async def mock_run_command(argv, cwd=None, config=None):
+        tool = argv[0]
+        if tool == "semgrep":
+            if "--version" in argv:
+                return RunResult(return_code=0, stdout="1.70.0", stderr="")
+            return RunResult(return_code=0, stdout=semgrep_json, stderr="")
+        if tool == "codeql":
+            return RunResult(return_code=-1, stdout="", stderr="Command not found: codeql")
+        return RunResult(return_code=-1, stdout="", stderr="tool not found")
+
+    with (
+        patch("app.scanners.base.run_command", side_effect=mock_run_command),
+        patch("app.scanners.semgrep.run_command", side_effect=mock_run_command),
+        patch("app.scanners.codeql.run_command", side_effect=mock_run_command),
+    ):
+        await run_scan(scan.id, db_session)
+
+    await db_session.refresh(scan)
+    assert scan.status == ScanStatus.COMPLETED
+
+    runs = (
+        await db_session.execute(
+            select(ScannerRun).where(ScannerRun.scan_id == scan.id)
+        )
+    ).scalars().all()
+
+    codeql_run = next((r for r in runs if r.scanner_name == "codeql"), None)
+    assert codeql_run is not None
+    assert codeql_run.status == ScannerRunStatus.UNAVAILABLE
+    assert "not installed" in (codeql_run.error_message or "")

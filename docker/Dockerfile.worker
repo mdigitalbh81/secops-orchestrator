@@ -24,14 +24,6 @@ RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/
     && mkdir -p /home/secops/.cache/trivy \
     && trivy image --download-db-only --cache-dir /home/secops/.cache/trivy
 
-# Install CodeQL CLI bundle (pinned version codeql-bundle-v2.26.4)
-ARG CODEQL_VERSION=codeql-bundle-v2.26.4
-RUN curl -sfL https://github.com/github/codeql-action/releases/download/${CODEQL_VERSION}/codeql-bundle-linux64.tar.gz -o /tmp/codeql-bundle.tar.gz \
-    && mkdir -p /opt/codeql \
-    && tar -xzf /tmp/codeql-bundle.tar.gz -C /opt/codeql \
-    && rm -f /tmp/codeql-bundle.tar.gz \
-    && ln -s /opt/codeql/codeql/codeql /usr/local/bin/codeql \
-    && chmod -R a+rX /opt/codeql
 
 # Install Nuclei CLI (pinned version v3.3.2)
 ARG NUCLEI_VERSION=v3.3.2

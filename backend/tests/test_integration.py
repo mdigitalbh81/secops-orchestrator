@@ -1,12 +1,19 @@
+import os
+import shutil
+import subprocess
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import RiskGate, ScanStatus
 from app.security.runner import RunResult
 from app.services.orchestrator import run_scan
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
 async def test_full_integration_multi_stack_scan(
@@ -138,3 +145,120 @@ async def test_full_integration_multi_stack_scan(
     assert lodash_corrs[0]["evidence_level"] == "CORROBORATED_STATIC"
     assert lodash_corrs[0]["confidence"] >= 0.85
     assert len(lodash_corrs[0]["findings"]) == 2
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def _postgres_is_available() -> bool:
+    try:
+        res = subprocess.run(
+            ["docker", "exec", "secops-postgres", "psql", "-U", "secops", "-c", "SELECT 1;"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _postgres_is_available(), reason="PostgreSQL container not accessible")
+def test_migration_005_safe_downgrade_roundtrip() -> None:
+    """Validate 004 -> 005 -> insert DAST_ONLY scan (source_path=NULL) -> downgrade 004 -> upgrade 005."""
+    disposable_db = f"secops_test_disp_{uuid.uuid4().hex[:8]}"
+
+    # 1. Create disposable database
+    create_res = subprocess.run(
+        ["docker", "exec", "secops-postgres", "psql", "-U", "secops", "-c", f"CREATE DATABASE {disposable_db};"],
+        capture_output=True,
+        text=True,
+    )
+    assert create_res.returncode == 0, f"Failed to create disposable db: {create_res.stderr}"
+
+    env = os.environ.copy()
+    env["SECOPS_DATABASE_URL"] = f"postgresql+asyncpg://secops:secops@localhost:5432/{disposable_db}"
+    env["SECOPS_DATABASE_URL_SYNC"] = f"postgresql://secops:secops@localhost:5432/{disposable_db}"
+
+    alembic_bin = shutil.which("alembic") or "/home/felps/projetos/secops-orchestrator/.venv/bin/alembic"
+
+    try:
+        # 2. Upgrade to 004
+        res = subprocess.run(
+            [alembic_bin, "upgrade", "004"],
+            cwd=str(BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"Upgrade to 004 failed: {res.stderr}"
+
+        # 3. Upgrade to 005
+        res = subprocess.run(
+            [alembic_bin, "upgrade", "005"],
+            cwd=str(BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"Upgrade to 005 failed: {res.stderr}"
+
+        # 4. Insert project and DAST_ONLY scan with source_path NULL
+        scan_id = f"scan-dast-{uuid.uuid4().hex[:8]}"
+        proj_id = f"proj-dast-{uuid.uuid4().hex[:8]}"
+        insert_sql = f"""
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('{proj_id}', 'DAST Only Downgrade Test', NOW(), NOW());
+
+        INSERT INTO scans (id, project_id, source_path, target_url, scan_mode, status, created_at)
+        VALUES ('{scan_id}', '{proj_id}', NULL, 'https://app.example.com', 'DAST_ONLY', 'COMPLETED', NOW());
+        """
+        res = subprocess.run(
+            ["docker", "exec", "secops-postgres", "psql", "-U", "secops", "-d", disposable_db, "-c", insert_sql],
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"Failed to insert test DAST scan: {res.stderr}"
+
+        # 5. Downgrade to 004
+        res = subprocess.run(
+            [alembic_bin, "downgrade", "004"],
+            cwd=str(BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"Downgrade 004 failed with DAST-only scan present: {res.stderr}"
+
+        # 6. Confirm scan was not deleted and source_path is now non-null
+        check_res = subprocess.run(
+            ["docker", "exec", "secops-postgres", "psql", "-U", "secops", "-d", disposable_db, "-t", "-c",
+             f"SELECT id, source_path FROM scans WHERE id = '{scan_id}';"],
+            capture_output=True,
+            text=True,
+        )
+        row = check_res.stdout.strip()
+        assert row, "Scan was deleted during downgrade!"
+        parts = [p.strip() for p in row.split("|")]
+        retrieved_id, retrieved_path = parts[0], parts[1]
+        assert retrieved_id == scan_id
+        expected_path = f"/tmp/secops-workspaces/dast-only-downgraded/{scan_id}"
+        assert retrieved_path == expected_path, f"Expected {expected_path}, got {retrieved_path}"
+
+        # 7. Upgrade back to 005
+        res = subprocess.run(
+            [alembic_bin, "upgrade", "005"],
+            cwd=str(BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"Upgrade back to 005 failed: {res.stderr}"
+
+    finally:
+        # Drop disposable database
+        subprocess.run(
+            ["docker", "exec", "secops-postgres", "psql", "-U", "secops", "-c", f"DROP DATABASE IF EXISTS {disposable_db};"],
+            capture_output=True,
+            text=True,
+        )

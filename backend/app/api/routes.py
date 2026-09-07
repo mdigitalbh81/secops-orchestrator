@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.correlation import CorrelationGroup
-from app.models.enums import FindingStatus, Severity
+from app.models.enums import FindingStatus, ScanMode, Severity
 from app.models.finding import Finding
 from app.models.project import Project
 from app.models.scan import Scan
@@ -56,6 +56,51 @@ async def create_project(payload: ProjectCreate, db: AsyncSession = Depends(get_
     return project
 
 
+@router.get("/projects", response_model=list[ProjectResponse])
+async def list_projects(
+    name: str | None = Query(None, description="Exact match on project name"),
+    repository_url: str | None = Query(None, description="Exact match on repository_url"),
+    db: AsyncSession = Depends(get_db),
+) -> list[Project]:
+    stmt = select(Project)
+    if name is not None:
+        stmt = stmt.where(Project.name == name)
+    if repository_url is not None:
+        stmt = stmt.where(Project.repository_url == repository_url)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/projects/{project_id}", response_model=ProjectResponse)
+async def get_project(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Project:
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+@router.get("/projects/{project_id}/scans", response_model=list[ScanResponse])
+async def list_project_scans(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=500, description="Max scans to return"),
+    db: AsyncSession = Depends(get_db),
+) -> list[Scan]:
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    stmt = (
+        select(Scan)
+        .where(Scan.project_id == project_id)
+        .order_by(Scan.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 @router.post("/scans", response_model=ScanResponse, status_code=202)
 async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -> Scan:
     # Verify project exists
@@ -64,13 +109,58 @@ async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -
         raise HTTPException(status_code=404, detail="Project not found")
 
     settings = get_settings()
-    try:
-        validated_path = validate_path(Path(payload.source_path), [settings.allowed_workspace_root])
-    except RunnerSecurityError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid source_path: {exc}") from exc
+
+    # Determine scan_mode: backwards compatibility for calls omitting scan_mode
+    if "scan_mode" not in payload.model_fields_set or payload.scan_mode is None:
+        if payload.source_path and payload.target_url:
+            mode = ScanMode.SOURCE_AND_DAST
+        elif payload.source_path:
+            mode = ScanMode.SOURCE
+        elif payload.target_url:
+            mode = ScanMode.DAST_ONLY
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Either source_path or target_url must be provided",
+            )
+    else:
+        mode = payload.scan_mode
+
+    # Validate required / disallowed fields per scan_mode
+    if mode == ScanMode.SOURCE:
+        if not payload.source_path:
+            raise HTTPException(status_code=400, detail="source_path is required for SOURCE scans")
+        if payload.target_url:
+            raise HTTPException(
+                status_code=400,
+                detail="target_url is not permitted for SOURCE scans; use SOURCE_AND_DAST instead",
+            )
+    elif mode == ScanMode.SOURCE_AND_DAST:
+        if not payload.source_path:
+            raise HTTPException(
+                status_code=400, detail="source_path is required for SOURCE_AND_DAST scans"
+            )
+        if not payload.target_url:
+            raise HTTPException(
+                status_code=400, detail="target_url is required for SOURCE_AND_DAST scans"
+            )
+    elif mode == ScanMode.DAST_ONLY:
+        if not payload.target_url:
+            raise HTTPException(
+                status_code=400, detail="target_url is required for DAST_ONLY scans"
+            )
+
+    validated_path: str | None = None
+    if payload.source_path and mode != ScanMode.DAST_ONLY:
+        try:
+            validated_path = str(
+                validate_path(Path(payload.source_path), [settings.allowed_workspace_root])
+            )
+        except RunnerSecurityError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid source_path: {exc}") from exc
 
     validated_target_url: str | None = None
-    if payload.target_url:
+    if payload.target_url and mode != ScanMode.SOURCE:
         try:
             validated_target_url = validate_dast_url(
                 payload.target_url,
@@ -82,13 +172,15 @@ async def create_scan(payload: ScanCreate, db: AsyncSession = Depends(get_db)) -
 
     scan = Scan(
         project_id=payload.project_id,
-        source_path=str(validated_path),
+        source_path=validated_path,
         target_url=validated_target_url,
+        scan_mode=mode,
     )
     db.add(scan)
     await db.flush()
     await db.refresh(scan)
-    # Commit before enqueuing so the worker can see the scan
+
+    # Commit before enqueuing so worker can see the scan
     await db.commit()
     await enqueue_scan(scan.id)
     return scan

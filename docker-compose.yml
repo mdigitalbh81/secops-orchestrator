@@ -30,7 +30,7 @@ services:
       retries: 5
 
   zap:
-    image: zaproxy/zap-stable:2.15.0
+    image: zaproxy/zap-stable:2.17.0
     container_name: secops-zap
     user: "1000:1000"
     command: >

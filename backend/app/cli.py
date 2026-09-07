@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 DEFAULT_API_URL = "http://localhost:8008"
 ALLOWED_WORKSPACE_ROOT = "/tmp/secops-workspaces"
 

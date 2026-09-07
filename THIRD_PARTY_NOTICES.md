@@ -4,7 +4,7 @@ This page documents third-party tools, libraries, container images, and software
 
 ## Important Licensing Separation
 
-- **SecOps Orchestrator License**: SecOps Orchestrator is licensed under its own license (PolyForm Perimeter License 1.0.1, source-available). See [LICENSE](/home/felps/projetos/secops-orchestrator/LICENSE).
+- **SecOps Orchestrator License**: SecOps Orchestrator is licensed under its own license (PolyForm Perimeter License 1.0.1, source-available). See [LICENSE](LICENSE).
 - **No Sublicensing / Relicensing**: SecOps Orchestrator's PolyForm Perimeter license does not relicense third-party components. Third-party tools, dependencies, and container images are **not** relicensed under the PolyForm Perimeter License.
 - **Independent Terms**: Each third-party component remains subject to its own original license, copyright notices, and terms established by respective copyright holders and upstream authors.
 - **Informational Notice**: This document is provided for informational and compliance purposes only and does not replace or supersede official license texts, notices, or agreements from individual third-party projects.
@@ -80,7 +80,7 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 
 http://www.apache.org/licenses/LICENSE-2.0
 
-Upstream NOTICE and copyright files provided in official distributions of Trivy, pip-audit, OWASP ZAP, and asyncpg are preserved within their respective containers and packages.
+When SecOps Orchestrator or derived container images are redistributed with third-party components, applicable upstream copyright, license, attribution, and NOTICE requirements must continue to be respected. Refer to each upstream project for the authoritative license and notice files.
 
 ### MIT License (FastAPI, SQLAlchemy, Alembic, Pydantic, Pydantic-Settings, redis-py, ARQ, Nuclei, Nuclei Templates)
 

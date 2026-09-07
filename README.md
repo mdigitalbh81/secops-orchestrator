@@ -197,7 +197,8 @@ The secure runner (`app.security.runner`) executes external tools with strict is
 
 - Python 3.12+
 - Docker & Docker Compose
-- - PostgreSQL 16+ and Valkey 8+ / Redis 7+ (or Docker Compose)
+- PostgreSQL 16+
+- Valkey 8+ (or via Docker Compose)
 
 ### Environment Configuration
 
@@ -429,6 +430,6 @@ Under this license:
 - You can modify and redistribute the software subject to the license terms.
 - You may not provide a product or service that competes with SecOps Orchestrator.
 
-See [LICENSE](/home/felps/projetos/secops-orchestrator/LICENSE) for complete terms.
+See [LICENSE](LICENSE) for complete terms.
 
-Third-party tools and libraries integrated by SecOps Orchestrator remain subject to their own licenses and terms. See [THIRD_PARTY_NOTICES.md](/home/felps/projetos/secops-orchestrator/THIRD_PARTY_NOTICES.md) for details.
+Third-party tools and libraries integrated by SecOps Orchestrator remain subject to their own licenses and terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.

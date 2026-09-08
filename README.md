@@ -313,6 +313,10 @@ secops dast https://app.example.com --project-id <uuid>
 # Check infrastructure health
 secops doctor
 
+# Check CodeQL availability in worker and view setup guidance
+secops codeql
+secops codeql --json
+
 # View the latest scan report
 secops report
 
@@ -323,6 +327,38 @@ secops findings --severity medium
 secops findings --scanner zap
 secops findings --scanner nuclei
 ```
+
+### GitHub CodeQL (Optional)
+
+SecOps Orchestrator does not download, distribute, install, or license GitHub CodeQL.
+
+CodeQL is an optional third-party integration that provides deep static analysis and taint tracking across Python and JavaScript/TypeScript codebases. Users are responsible for ensuring their use complies with GitHub's terms and any required license.
+
+#### Integration Workflow
+
+1. Review [GitHub's CodeQL Terms and Conditions](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md).
+2. Install CodeQL on your host machine following GitHub's official documentation at [Setting up the CodeQL CLI](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli).
+3. Export the absolute path to your CodeQL installation directory:
+   ```bash
+   export SECOPS_CODEQL_HOME=/absolute/path/to/codeql
+   ```
+4. Recreate the worker service using the CodeQL overlay:
+   ```bash
+   docker compose \
+     -f docker-compose.yml \
+     -f docker-compose.codeql.yml \
+     up -d --force-recreate worker
+   ```
+5. Verify the integration inside the worker:
+   ```bash
+   secops codeql
+   ```
+6. Run scans normally:
+   ```bash
+   secops audit ~/projetos/app
+   ```
+
+When CodeQL is present in the worker, it is automatically executed by the CodeQL scanner adapter. When CodeQL is absent, it is reported as `UNAVAILABLE` and all remaining scanners continue normally.
 
 ### Key Operational Behaviors
 

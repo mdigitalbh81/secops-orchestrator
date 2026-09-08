@@ -1086,6 +1086,80 @@ def cmd_findings(args: argparse.Namespace, api: ApiClient) -> int:
     return 0
 
 
+def sanitize_codeql_error(raw: str, max_length: int = 200) -> str:
+    """Sanitize and summarize error message from CodeQL execution."""
+    cleaned = raw.strip()
+    if not cleaned:
+        return "Unknown error during CodeQL execution"
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if not lines:
+        return "Unknown error during CodeQL execution"
+    candidate = lines[0]
+    for line in lines:
+        if not line.lower().startswith("warning"):
+            candidate = line
+            break
+    if len(candidate) > max_length:
+        candidate = candidate[: max_length - 3] + "..."
+    return candidate
+
+
+def inspect_codeql_worker(compose_base: list[str]) -> tuple[str, str | None, str | None]:
+    """Inspect GitHub CodeQL availability and health inside worker container.
+
+    Returns:
+        tuple of (status, version, error_message)
+        where status is 'available', 'unavailable', or 'error'.
+    """
+    which_cmd = compose_base + [
+        "exec",
+        "-T",
+        "worker",
+        "python",
+        "-c",
+        "import shutil; print(shutil.which('codeql') or '')",
+    ]
+    which_res = subprocess.run(
+        which_cmd,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if which_res.returncode != 0 or not which_res.stdout.strip():
+        return "unavailable", None, None
+
+    ver_cmd = compose_base + [
+        "exec",
+        "-T",
+        "worker",
+        "codeql",
+        "version",
+        "--format=json",
+    ]
+    try:
+        ver_res = subprocess.run(
+            ver_cmd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return "error", None, "Timed out executing CodeQL check in worker"
+    except Exception as exc:
+        return "error", None, f"Failed to execute CodeQL check in worker: {exc}"
+
+    if ver_res.returncode == 0:
+        version = parse_codeql_version(ver_res.stdout) or "available"
+        return "available", version, None
+
+    raw_err = (
+        ver_res.stderr.strip()
+        or ver_res.stdout.strip()
+        or f"CodeQL process exited with code {ver_res.returncode}"
+    )
+    return "error", None, sanitize_codeql_error(raw_err)
+
+
 def cmd_codeql(args: argparse.Namespace, api: ApiClient) -> int:
     """Inspect GitHub CodeQL availability inside worker and show setup guidance."""
     repo_root = get_secops_repo_root()
@@ -1122,12 +1196,7 @@ def cmd_codeql(args: argparse.Namespace, api: ApiClient) -> int:
 
     # Check CodeQL inside worker container
     try:
-        cql_res = subprocess.run(
-            compose_base + ["exec", "-T", "worker", "codeql", "version", "--format=json"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        status, version, error_msg = inspect_codeql_worker(compose_base)
     except subprocess.TimeoutExpired:
         sys.stderr.write("Error: Timed out executing CodeQL check in worker.\n")
         return 1
@@ -1135,12 +1204,7 @@ def cmd_codeql(args: argparse.Namespace, api: ApiClient) -> int:
         sys.stderr.write(f"Error: Failed to execute CodeQL check in worker: {exc}\n")
         return 1
 
-    is_available = (cql_res.returncode == 0)
-    version = parse_codeql_version(cql_res.stdout) if is_available else None
-    if is_available and not version:
-        version = "available"
-
-    if is_available:
+    if status == "available":
         if args.json:
             output = {
                 "scanner": "codeql",
@@ -1161,6 +1225,30 @@ def cmd_codeql(args: argparse.Namespace, api: ApiClient) -> int:
             print("CodeQL is an optional third-party integration. Its use is subject to GitHub's CodeQL Terms and Conditions.")
         return 0
 
+    if status == "error":
+        if args.json:
+            output = {
+                "scanner": "codeql",
+                "status": "error",
+                "environment": "worker",
+                "version": None,
+                "distributed_by_secops": False,
+                "terms_url": CODEQL_TERMS_URL,
+                "setup_url": CODEQL_SETUP_URL,
+                "error": error_msg or "Unknown error",
+            }
+            print(json.dumps(output, indent=2))
+        else:
+            print("GitHub CodeQL")
+            print("  Status:      ERROR")
+            print("  Environment: SecOps worker")
+            print("  CodeQL found in worker but not executed correctly.")
+            if error_msg:
+                print(f"  {error_msg}")
+            print("  Verify CodeQL installation and run: secops codeql")
+        return 1
+
+    # status == "unavailable"
     if args.json:
         output = {
             "scanner": "codeql",
@@ -1289,15 +1377,12 @@ def cmd_doctor(args: argparse.Namespace, api: ApiClient) -> int:
             timeout=10,
         )
         if ps_cql.returncode == 0 and ps_cql.stdout.strip():
-            cql_res = subprocess.run(
-                compose_base + ["exec", "-T", "worker", "codeql", "version", "--format=json"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if cql_res.returncode == 0:
-                cql_ver = parse_codeql_version(cql_res.stdout) or "available"
+            cql_status, cql_ver, _ = inspect_codeql_worker(compose_base)
+            if cql_status == "available":
                 print(f"[✓] CodeQL: {cql_ver} (worker)")
+            elif cql_status == "error":
+                print("[!] CodeQL: integration check failed")
+                print("    Run 'secops codeql' for details")
             else:
                 print("[○] CodeQL: optional, not available in worker")
                 print("    Run 'secops codeql' for setup guidance")
@@ -1412,8 +1497,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "codeql":
             return cmd_codeql(args, api)
         else:
-             parser.print_help()
-             return 0
+            parser.print_help()
+            return 0
     except Exception as exc:
         if debug:
             raise

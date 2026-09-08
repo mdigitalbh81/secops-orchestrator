@@ -551,6 +551,8 @@ def test_codeql_available_worker(capsys: pytest.CaptureFixture[str]) -> None:
     def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
         if "ps" in argv:
             return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
+        if "python" in argv:
+            return MagicMock(returncode=0, stdout="/opt/secops-codeql/codeql\n", stderr="")
         if "codeql" in argv:
             return MagicMock(returncode=0, stdout=json.dumps({"version": "2.19.0"}), stderr="")
         return MagicMock(returncode=0, stdout="", stderr="")
@@ -590,8 +592,8 @@ def test_codeql_unavailable_worker(capsys: pytest.CaptureFixture[str]) -> None:
     def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
         if "ps" in argv:
             return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
-        if "codeql" in argv:
-            return MagicMock(returncode=127, stdout="", stderr="codeql: command not found\n")
+        if "python" in argv:
+            return MagicMock(returncode=0, stdout="", stderr="")
         return MagicMock(returncode=0, stdout="", stderr="")
 
     # Human output
@@ -621,6 +623,53 @@ def test_codeql_unavailable_worker(capsys: pytest.CaptureFixture[str]) -> None:
     assert data["environment"] == "worker"
     assert data["version"] is None
     assert data["distributed_by_secops"] is False
+
+
+def test_codeql_broken_worker(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test CodeQL present in worker but broken exits 1 with error status."""
+    api = MagicMock(spec=ApiClient)
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "ps" in argv:
+            return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
+        if "python" in argv:
+            return MagicMock(returncode=0, stdout="/opt/secops-codeql/codeql\n", stderr="")
+        if "codeql" in argv:
+            return MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="A fatal error occurred: Java not found\n",
+            )
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    # Human output
+    args_human = build_parser().parse_args(["codeql"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_human, api)
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "GitHub CodeQL" in captured.out
+    assert "Status:      ERROR" in captured.out
+    assert "Environment: SecOps worker" in captured.out
+    assert "CodeQL found in worker but not executed correctly." in captured.out
+    assert "A fatal error occurred: Java not found" in captured.out
+    assert "Verify CodeQL installation and run: secops codeql" in captured.out
+
+    # JSON output
+    args_json = build_parser().parse_args(["codeql", "--json"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_json, api)
+    assert code == 1
+    captured_json = capsys.readouterr()
+    data = json.loads(captured_json.out)
+    assert data["scanner"] == "codeql"
+    assert data["status"] == "error"
+    assert data["environment"] == "worker"
+    assert data["version"] is None
+    assert data["distributed_by_secops"] is False
+    assert data["error"] == "A fatal error occurred: Java not found"
+    assert "terms_url" in data
+    assert "setup_url" in data
 
 
 def test_codeql_docker_or_worker_broken(capsys: pytest.CaptureFixture[str]) -> None:
@@ -654,6 +703,8 @@ def test_doctor_codeql_available(capsys: pytest.CaptureFixture[str]) -> None:
     args = build_parser().parse_args(["doctor"])
 
     def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "python" in argv:
+            return MagicMock(returncode=0, stdout="/opt/secops-codeql/codeql\n", stderr="")
         if "codeql" in argv:
             return MagicMock(returncode=0, stdout=json.dumps({"version": "2.19.0"}), stderr="")
         return MagicMock(returncode=0, stdout="cid_or_version\n", stderr="")
@@ -673,8 +724,8 @@ def test_doctor_codeql_absent_does_not_fail(capsys: pytest.CaptureFixture[str]) 
     args = build_parser().parse_args(["doctor"])
 
     def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
-        if "codeql" in argv:
-            return MagicMock(returncode=127, stdout="", stderr="codeql: not found\n")
+        if "python" in argv:
+            return MagicMock(returncode=0, stdout="", stderr="")
         return MagicMock(returncode=0, stdout="cid_or_version\n", stderr="")
 
     with patch("subprocess.run", side_effect=mock_subprocess):
@@ -683,6 +734,29 @@ def test_doctor_codeql_absent_does_not_fail(capsys: pytest.CaptureFixture[str]) 
     captured = capsys.readouterr()
     assert "[○] CodeQL: optional, not available in worker" in captured.out
     assert "Run 'secops codeql' for setup guidance" in captured.out
+
+
+def test_doctor_codeql_broken_does_not_fail(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test Doctor reports CodeQL broken without failing doctor."""
+    api = MagicMock(spec=ApiClient)
+    api.get.return_value = {"status": "ok"}
+    api.base_url = "http://localhost:8008"
+    args = build_parser().parse_args(["doctor"])
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "python" in argv:
+            return MagicMock(returncode=0, stdout="/opt/secops-codeql/codeql\n", stderr="")
+        if "codeql" in argv:
+            return MagicMock(returncode=1, stdout="", stderr="codeql: JVM crash\n")
+        return MagicMock(returncode=0, stdout="cid_or_version\n", stderr="")
+
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_doctor(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "[!] CodeQL: integration check failed" in captured.out
+    assert "Run 'secops codeql' for details" in captured.out
+    assert "not available" not in captured.out
 
 
 def test_doctor_shows_valkey_service(capsys: pytest.CaptureFixture[str]) -> None:

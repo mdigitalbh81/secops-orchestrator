@@ -7,7 +7,10 @@
 
 services:
   worker:
-   volumes:
-     - ${SECOPS_CODEQL_HOME}:/opt/secops-codeql:ro
-   environment:
+    volumes:
+      - type: bind
+        source: ${SECOPS_CODEQL_HOME:?Set SECOPS_CODEQL_HOME to your CodeQL installation directory}
+        target: /opt/secops-codeql
+        read_only: true
+    environment:
       PATH: /opt/secops-codeql:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

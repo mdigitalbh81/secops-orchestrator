@@ -61,12 +61,14 @@ flowchart TD
 
 | Scanner | Target | Detection Trigger | Default Confidence |
 | :--- | :--- | :--- | :--- |
-| **CodeQL** | Deep SAST (Dataflow / Taint) | Python (`.py`), JS/TS (`.js`, `.ts`, `package.json`) | 0.70 |
+| **CodeQL** (Optional) | Deep SAST (Dataflow / Taint) | Python (`.py`), JS/TS (`.js`, `.ts`, `package.json`) | 0.70 |
 | **AI AppSec Reviewer** | LLM Heuristic SAST / Logic | When configured (`AI_APPSEC_ENABLED=true`) | 0.45 |
 | **Semgrep** | SAST (Source code) | Any source code repository | 0.5 |
 | **npm audit** | SCA (Node.js dependencies) | `package.json` | 0.7 (with CVE) / 0.5 |
 | **pip-audit** | SCA (Python dependencies) | `requirements.txt` or `pyproject.toml` | 0.7 (with CVE) / 0.5 |
 | **Trivy** | Container / FS / Config | `Dockerfile` | 0.7 (with CVE) / 0.5 |
+
+> **CodeQL Integration (Optional)**: CodeQL is an optional third-party integration. SecOps Orchestrator does not distribute or install GitHub CodeQL CLI. SecOps checks whether `codeql` is available in the worker execution environment's `PATH`; if not found, it reports the scanner run status as `UNAVAILABLE` and the overall scan continues normally. Users who choose to install and enable CodeQL are solely responsible for obtaining any required license and ensuring their use complies with [GitHub's CodeQL Terms and Conditions](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md). See [Setting up the CodeQL CLI](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli) for official installation documentation. SecOps Orchestrator grants no rights to use CodeQL.
 
 ---
 
@@ -195,7 +197,8 @@ The secure runner (`app.security.runner`) executes external tools with strict is
 
 - Python 3.12+
 - Docker & Docker Compose
-- PostgreSQL 16+ & Redis 7+ (or via Docker Compose)
+- PostgreSQL 16+
+- Valkey 8+ (or via Docker Compose)
 
 ### Environment Configuration
 
@@ -243,7 +246,7 @@ python -m app.workers.scan_worker
 
 ## Running with Docker Compose
 
-Start all services (PostgreSQL, Redis, API, and Worker with pre-installed scanner CLI tools):
+Start all services (PostgreSQL, Valkey, API, and Worker):
 
 ```bash
 docker compose up -d --build
@@ -253,7 +256,7 @@ Services exposed:
 - **API**: [http://localhost:8008](http://localhost:8008)
 - **API Docs (Swagger)**: [http://localhost:8008/docs](http://localhost:8008/docs)
 - **PostgreSQL**: `localhost:5432`
-- **Redis**: `localhost:6379`
+- **Valkey**: `localhost:6379`
 
 ---
 
@@ -277,7 +280,7 @@ Or execute directly from the repository root via `./secops`.
 secops audit ~/projetos/meu-app
 ```
 
-Analyzes committed source code and dependencies using static scanners (Semgrep, CodeQL, npm-audit, pip-audit, Trivy).
+Analyzes committed source code and dependencies using static scanners (Semgrep, CodeQL [optional, if available in the worker execution environment's PATH], npm-audit, pip-audit, Trivy).
 
 #### Source + DAST
 
@@ -420,12 +423,13 @@ timeline
 
 ## License
 
-This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
+SecOps Orchestrator is licensed under the **PolyForm Perimeter License 1.0.1** (source-available).
 
-You may use, study, modify, and redistribute this software for noncommercial purposes.
+Under this license:
+- You can use SecOps Orchestrator for personal and internal business purposes, including securing your own commercial software.
+- You can modify and redistribute the software subject to the license terms.
+- You may not provide a product or service that competes with SecOps Orchestrator.
 
-**Commercial use is not permitted without a separate commercial license from the copyright holder.**
+See [LICENSE](LICENSE) for complete terms.
 
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-
-> This project is source-available. The PolyForm Noncommercial License does not permit commercial use.
+Third-party tools and libraries integrated by SecOps Orchestrator remain subject to their own licenses and terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.

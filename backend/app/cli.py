@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 DEFAULT_API_URL = "http://localhost:8008"
 ALLOWED_WORKSPACE_ROOT = "/tmp/secops-workspaces"
 CODEQL_TERMS_URL = "https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md"

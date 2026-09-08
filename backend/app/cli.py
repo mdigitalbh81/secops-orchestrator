@@ -1119,13 +1119,23 @@ def inspect_codeql_worker(compose_base: list[str]) -> tuple[str, str | None, str
         "-c",
         "import shutil; print(shutil.which('codeql') or '')",
     ]
-    which_res = subprocess.run(
-        which_cmd,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if which_res.returncode != 0 or not which_res.stdout.strip():
+    try:
+        which_res = subprocess.run(
+            which_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return "error", None, "Timed out checking CodeQL presence in worker"
+    except Exception as exc:
+        return "error", None, f"Failed to check CodeQL presence in worker: {exc}"
+
+    if which_res.returncode != 0:
+        raw = which_res.stderr.strip() or which_res.stdout.strip() or f"Detection command exited with code {which_res.returncode}"
+        return "error", None, sanitize_codeql_error(raw)
+
+    if not which_res.stdout.strip():
         return "unavailable", None, None
 
     ver_cmd = compose_base + [

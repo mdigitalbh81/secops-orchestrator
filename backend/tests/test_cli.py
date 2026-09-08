@@ -672,6 +672,53 @@ def test_codeql_broken_worker(capsys: pytest.CaptureFixture[str]) -> None:
     assert "setup_url" in data
 
 
+def test_codeql_which_fails_is_error(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test that which returning non-zero is treated as error, not unavailable."""
+    api = MagicMock(spec=ApiClient)
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "ps" in argv:
+            return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
+        if "python" in argv:
+            return MagicMock(returncode=1, stdout="", stderr="container error\n")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    args = build_parser().parse_args(["codeql"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args, api)
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Status:      ERROR" in captured.out
+
+    args_json = build_parser().parse_args(["codeql", "--json"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_json, api)
+    assert code == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["status"] == "error"
+
+
+def test_codeql_which_timeout_is_error(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test that which timing out is treated as error, not unavailable."""
+    api = MagicMock(spec=ApiClient)
+    call_count = 0
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        nonlocal call_count
+        if "ps" in argv:
+            return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
+        if "python" in argv:
+            raise subprocess.TimeoutExpired(cmd="docker", timeout=10)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    args = build_parser().parse_args(["codeql"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args, api)
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "Status:      ERROR" in captured.out
+
+
 def test_codeql_docker_or_worker_broken(capsys: pytest.CaptureFixture[str]) -> None:
     """Test D: Docker/worker failure exits 1."""
     api = MagicMock(spec=ApiClient)
@@ -756,6 +803,26 @@ def test_doctor_codeql_broken_does_not_fail(capsys: pytest.CaptureFixture[str]) 
     captured = capsys.readouterr()
     assert "[!] CodeQL: integration check failed" in captured.out
     assert "Run 'secops codeql' for details" in captured.out
+    assert "not available" not in captured.out
+
+
+def test_doctor_codeql_which_fails_is_error(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test Doctor treats which returning non-zero as integration error, not unavailable."""
+    api = MagicMock(spec=ApiClient)
+    api.get.return_value = {"status": "ok"}
+    api.base_url = "http://localhost:8008"
+    args = build_parser().parse_args(["doctor"])
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "python" in argv:
+            return MagicMock(returncode=1, stdout="", stderr="container error\n")
+        return MagicMock(returncode=0, stdout="cid_or_version\n", stderr="")
+
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_doctor(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "[!] CodeQL: integration check failed" in captured.out
     assert "not available" not in captured.out
 
 

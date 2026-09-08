@@ -14,6 +14,7 @@ from app.cli import (
     GitMetadata,
     build_parser,
     cmd_audit,
+    cmd_codeql,
     cmd_doctor,
     cmd_findings,
     cmd_report,
@@ -25,6 +26,7 @@ from app.cli import (
     load_state,
     main,
     normalize_git_url,
+    parse_codeql_version,
     resolve_project,
     save_state,
 )
@@ -518,3 +520,336 @@ def test_main_entrypoint() -> None:
     with pytest.raises(SystemExit) as exc_info, patch("sys.stdout.write"):
         main(["--help"])
     assert exc_info.value.code == 0
+
+
+# 30. CodeQL CLI commands and UX tests
+def test_codeql_parser() -> None:
+    """Test A: parser for secops codeql and secops codeql --json."""
+    parser = build_parser()
+
+    args_plain = parser.parse_args(["codeql"])
+    assert args_plain.command == "codeql"
+    assert args_plain.json is False
+
+    args_json = parser.parse_args(["codeql", "--json"])
+    assert args_json.command == "codeql"
+    assert args_json.json is True
+
+
+def test_codeql_version_parsing() -> None:
+    """Defensive parsing for CodeQL CLI version."""
+    assert parse_codeql_version('{"version": "2.19.0"}') == "2.19.0"
+    assert parse_codeql_version('{"codeql_version": "2.18.1"}') == "2.18.1"
+    assert parse_codeql_version("CodeQL command-line toolchain release 2.19.0.") == "2.19.0"
+    assert parse_codeql_version("") is None
+
+
+def test_codeql_available_worker(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test B: CodeQL available in worker exits 0 with expected human and json output."""
+    api = MagicMock(spec=ApiClient)
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "ps" in argv:
+            return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
+        if "codeql" in argv:
+            return MagicMock(returncode=0, stdout=json.dumps({"version": "2.19.0"}), stderr="")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    # Human output
+    args_human = build_parser().parse_args(["codeql"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_human, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "GitHub CodeQL" in captured.out
+    assert "Status:      AVAILABLE" in captured.out
+    assert "Environment: SecOps worker" in captured.out
+    assert "Version:     2.19.0" in captured.out
+    assert "CodeQL is an optional third-party integration." in captured.out
+
+    # JSON output
+    args_json = build_parser().parse_args(["codeql", "--json"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_json, api)
+    assert code == 0
+    captured_json = capsys.readouterr()
+    data = json.loads(captured_json.out)
+    assert data["scanner"] == "codeql"
+    assert data["status"] == "available"
+    assert data["environment"] == "worker"
+    assert data["version"] == "2.19.0"
+    assert data["distributed_by_secops"] is False
+    assert "github.com" in data["terms_url"]
+    assert "docs.github.com" in data["setup_url"]
+
+
+def test_codeql_unavailable_worker(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test C: CodeQL unavailable in worker exits 0 with guidance."""
+    api = MagicMock(spec=ApiClient)
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "ps" in argv:
+            return MagicMock(returncode=0, stdout="worker_cid_123\n", stderr="")
+        if "codeql" in argv:
+            return MagicMock(returncode=127, stdout="", stderr="codeql: command not found\n")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    # Human output
+    args_human = build_parser().parse_args(["codeql"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_human, api)
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "GitHub CodeQL" in captured.out
+        assert "Status:      NOT AVAILABLE" in captured.out
+        assert "Environment: SecOps worker" in captured.out
+        assert "1. Review GitHub's CodeQL Terms and Conditions:" in captured.out
+        assert "2. Follow GitHub's official CodeQL installation documentation:" in captured.out
+        assert "3. Make the CodeQL installation available inside the SecOps worker." in captured.out
+        assert "4. Run: secops codeql" in captured.out
+        assert "SecOps Orchestrator grants no rights to use CodeQL." in captured.out
+
+    # JSON output
+    args_json = build_parser().parse_args(["codeql", "--json"])
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_codeql(args_json, api)
+    assert code == 0
+    captured_json = capsys.readouterr()
+    data = json.loads(captured_json.out)
+    assert data["scanner"] == "codeql"
+    assert data["status"] == "unavailable"
+    assert data["environment"] == "worker"
+    assert data["version"] is None
+    assert data["distributed_by_secops"] is False
+
+
+def test_codeql_docker_or_worker_broken(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test D: Docker/worker failure exits 1."""
+    api = MagicMock(spec=ApiClient)
+    args = build_parser().parse_args(["codeql"])
+
+    # Worker not running
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+        code = cmd_codeql(args, api)
+        assert code == 1
+    captured = capsys.readouterr()
+    assert "SecOps worker container is not running" in captured.err
+
+    # Docker command error
+    with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="", stderr="Docker daemon down")):
+        code = cmd_codeql(args, api)
+        assert code == 1
+
+    # Docker binary not found
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        code = cmd_codeql(args, api)
+        assert code == 1
+
+
+def test_doctor_codeql_available(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test E: Doctor shows CodeQL available when detected in worker."""
+    api = MagicMock(spec=ApiClient)
+    api.get.return_value = {"status": "ok"}
+    api.base_url = "http://localhost:8008"
+    args = build_parser().parse_args(["doctor"])
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "codeql" in argv:
+            return MagicMock(returncode=0, stdout=json.dumps({"version": "2.19.0"}), stderr="")
+        return MagicMock(returncode=0, stdout="cid_or_version\n", stderr="")
+
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_doctor(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "[✓] CodeQL: 2.19.0 (worker)" in captured.out
+
+
+def test_doctor_codeql_absent_does_not_fail(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test F: Doctor reports CodeQL absent without failing doctor."""
+    api = MagicMock(spec=ApiClient)
+    api.get.return_value = {"status": "ok"}
+    api.base_url = "http://localhost:8008"
+    args = build_parser().parse_args(["doctor"])
+
+    def mock_subprocess(argv: list[str], **kwargs: Any) -> MagicMock:
+        if "codeql" in argv:
+            return MagicMock(returncode=127, stdout="", stderr="codeql: not found\n")
+        return MagicMock(returncode=0, stdout="cid_or_version\n", stderr="")
+
+    with patch("subprocess.run", side_effect=mock_subprocess):
+        code = cmd_doctor(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "[○] CodeQL: optional, not available in worker" in captured.out
+    assert "Run 'secops codeql' for setup guidance" in captured.out
+
+
+def test_doctor_shows_valkey_service(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test G: Doctor displays 'Valkey' instead of 'Redis'."""
+    api = MagicMock(spec=ApiClient)
+    api.get.return_value = {"status": "ok"}
+    api.base_url = "http://localhost:8008"
+    args = build_parser().parse_args(["doctor"])
+
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="ok\n", stderr="")):
+        code = cmd_doctor(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "[✓] Valkey:" in captured.out
+    assert "[✓] Redis:" not in captured.out
+
+
+def test_audit_human_hint_when_codeql_unavailable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Test H: Audit shows CodeQL setup hint in human report when CodeQL is unavailable."""
+    repo_dir = tmp_path / "audit_hint_repo"
+    repo_dir.mkdir()
+    _init_test_git_repo(repo_dir)
+
+    def mock_get(path: str, query_params: dict | None = None) -> Any:
+        if path == "/api/projects":
+            return [{"id": "pid-hint", "name": "audit_hint_repo"}]
+        if path.startswith("/api/projects/pid-hint/scans"):
+            return []
+        if path == "/api/scans/sid-hint":
+            return {"id": "sid-hint", "status": "COMPLETED", "risk_gate": "PASS"}
+        if path == "/api/scans/sid-hint/summary":
+            return {
+                "scan_id": "sid-hint",
+                "status": "COMPLETED",
+                "risk_gate": "PASS",
+                "totals": {},
+                "scanner_runs": {"semgrep": "completed", "codeql": "unavailable"},
+            }
+        return {}
+
+    api = MagicMock(spec=ApiClient)
+    api.get.side_effect = mock_get
+    api.post.return_value = {"id": "sid-hint"}
+
+    with (
+        patch("app.cli.deploy_snapshot"),
+        patch("app.cli.preflight_check", return_value=(True, "OK")),
+    ):
+        args = build_parser().parse_args(["audit", str(repo_dir)])
+        code = cmd_audit(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "CodeQL is optional and not available in the worker. Run `secops codeql` for setup guidance." in captured.out
+
+
+def test_audit_json_no_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Test I: Audit with --json does not display human hint."""
+    repo_dir = tmp_path / "audit_json_repo"
+    repo_dir.mkdir()
+    _init_test_git_repo(repo_dir)
+
+    def mock_get(path: str, query_params: dict | None = None) -> Any:
+        if path == "/api/projects":
+            return [{"id": "pid-json", "name": "audit_json_repo"}]
+        if path.startswith("/api/projects/pid-json/scans"):
+            return []
+        if path == "/api/scans/sid-json":
+            return {"id": "sid-json", "status": "COMPLETED", "risk_gate": "PASS"}
+        if path == "/api/scans/sid-json/summary":
+            return {
+                "scan_id": "sid-json",
+                "status": "COMPLETED",
+                "risk_gate": "PASS",
+                "totals": {},
+                "scanner_runs": {"semgrep": "completed", "codeql": "unavailable"},
+            }
+        return {}
+
+    api = MagicMock(spec=ApiClient)
+    api.get.side_effect = mock_get
+    api.post.return_value = {"id": "sid-json"}
+
+    with (
+        patch("app.cli.deploy_snapshot"),
+        patch("app.cli.preflight_check", return_value=(True, "OK")),
+    ):
+        args = build_parser().parse_args(["audit", str(repo_dir), "--json"])
+        code = cmd_audit(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Run `secops codeql`" not in captured.out
+    # Output must be valid json
+    data = json.loads(captured.out)
+    assert data["scan"]["status"] == "COMPLETED"
+
+
+def test_audit_not_applicable_no_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Test J: Audit with CodeQL not_applicable does not show hint."""
+    repo_dir = tmp_path / "audit_na_repo"
+    repo_dir.mkdir()
+    _init_test_git_repo(repo_dir)
+
+    def mock_get(path: str, query_params: dict | None = None) -> Any:
+        if path == "/api/projects":
+            return [{"id": "pid-na", "name": "audit_na_repo"}]
+        if path.startswith("/api/projects/pid-na/scans"):
+            return []
+        if path == "/api/scans/sid-na":
+            return {"id": "sid-na", "status": "COMPLETED", "risk_gate": "PASS"}
+        if path == "/api/scans/sid-na/summary":
+            return {
+                "scan_id": "sid-na",
+                "status": "COMPLETED",
+                "risk_gate": "PASS",
+                "totals": {},
+                "scanner_runs": {"semgrep": "completed", "codeql": "not_applicable"},
+            }
+        return {}
+
+    api = MagicMock(spec=ApiClient)
+    api.get.side_effect = mock_get
+    api.post.return_value = {"id": "sid-na"}
+
+    with (
+        patch("app.cli.deploy_snapshot"),
+        patch("app.cli.preflight_check", return_value=(True, "OK")),
+    ):
+        args = build_parser().parse_args(["audit", str(repo_dir)])
+        code = cmd_audit(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Run `secops codeql`" not in captured.out
+
+
+def test_audit_completed_no_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Test K: Audit with CodeQL completed does not show hint."""
+    repo_dir = tmp_path / "audit_comp_repo"
+    repo_dir.mkdir()
+    _init_test_git_repo(repo_dir)
+
+    def mock_get(path: str, query_params: dict | None = None) -> Any:
+        if path == "/api/projects":
+            return [{"id": "pid-comp", "name": "audit_comp_repo"}]
+        if path.startswith("/api/projects/pid-comp/scans"):
+            return []
+        if path == "/api/scans/sid-comp":
+            return {"id": "sid-comp", "status": "COMPLETED", "risk_gate": "PASS"}
+        if path == "/api/scans/sid-comp/summary":
+            return {
+                "scan_id": "sid-comp",
+                "status": "COMPLETED",
+                "risk_gate": "PASS",
+                "totals": {},
+                "scanner_runs": {"semgrep": "completed", "codeql": "completed"},
+            }
+        return {}
+
+    api = MagicMock(spec=ApiClient)
+    api.get.side_effect = mock_get
+    api.post.return_value = {"id": "sid-comp"}
+
+    with (
+        patch("app.cli.deploy_snapshot"),
+        patch("app.cli.preflight_check", return_value=(True, "OK")),
+    ):
+        args = build_parser().parse_args(["audit", str(repo_dir)])
+        code = cmd_audit(args, api)
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Run `secops codeql`" not in captured.out

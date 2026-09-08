@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -22,6 +23,26 @@ from typing import Any
 VERSION = "0.5.0"
 DEFAULT_API_URL = "http://localhost:8008"
 ALLOWED_WORKSPACE_ROOT = "/tmp/secops-workspaces"
+CODEQL_TERMS_URL = "https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md"
+CODEQL_SETUP_URL = "https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli"
+
+
+def parse_codeql_version(stdout: str) -> str | None:
+    """Extract semantic version from CodeQL CLI output."""
+    raw = stdout.strip()
+    if not raw:
+        return None
+    with contextlib.suppress(Exception):
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            ver = data.get("version") or data.get("codeql_version") or data.get("appVersion")
+            if ver:
+                return str(ver).strip()
+    m = re.search(r"\b(\d+\.\d+\.\d+)\b", raw)
+    if m:
+        return m.group(1)
+    lines = raw.splitlines()
+    return lines[0].strip() if lines else None
 
 
 def get_api_base_url() -> str:
@@ -604,6 +625,11 @@ def print_human_report(
     print(f"Risk Gate: {risk_gate}")
     print(f"Scan: {summary.get('scan_id')}")
 
+    scanner_runs = summary.get("scanner_runs", {})
+    if scanner_runs.get("codeql", "").lower() == "unavailable":
+        print()
+        print("CodeQL is optional and not available in the worker. Run `secops codeql` for setup guidance.")
+
 
 def cmd_dast(args: argparse.Namespace, api: ApiClient) -> int:
     """Execute a DAST-only scan against a URL (no source code required)."""
@@ -1060,6 +1086,109 @@ def cmd_findings(args: argparse.Namespace, api: ApiClient) -> int:
     return 0
 
 
+def cmd_codeql(args: argparse.Namespace, api: ApiClient) -> int:
+    """Inspect GitHub CodeQL availability inside worker and show setup guidance."""
+    repo_root = get_secops_repo_root()
+    compose_base = ["docker", "compose"]
+    if repo_root and (repo_root / "docker-compose.yml").is_file():
+        compose_base += ["-f", str(repo_root / "docker-compose.yml")]
+
+    # Check if worker container is running
+    try:
+        ps_res = subprocess.run(
+            compose_base + ["ps", "-q", "worker"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        sys.stderr.write("Error: Docker is not installed or not in PATH.\n")
+        return 1
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("Error: Timed out checking SecOps worker container.\n")
+        return 1
+    except Exception as exc:
+        sys.stderr.write(f"Error: Failed to check SecOps worker container: {exc}\n")
+        return 1
+
+    if ps_res.returncode != 0:
+        sys.stderr.write(f"Error: Docker check failed: {ps_res.stderr.strip()}\n")
+        return 1
+
+    worker_id = ps_res.stdout.strip()
+    if not worker_id:
+        sys.stderr.write("Error: SecOps worker container is not running. Start stack with 'docker compose up -d'.\n")
+        return 1
+
+    # Check CodeQL inside worker container
+    try:
+        cql_res = subprocess.run(
+            compose_base + ["exec", "-T", "worker", "codeql", "version", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("Error: Timed out executing CodeQL check in worker.\n")
+        return 1
+    except Exception as exc:
+        sys.stderr.write(f"Error: Failed to execute CodeQL check in worker: {exc}\n")
+        return 1
+
+    is_available = (cql_res.returncode == 0)
+    version = parse_codeql_version(cql_res.stdout) if is_available else None
+    if is_available and not version:
+        version = "available"
+
+    if is_available:
+        if args.json:
+            output = {
+                "scanner": "codeql",
+                "status": "available",
+                "environment": "worker",
+                "version": version,
+                "distributed_by_secops": False,
+                "terms_url": CODEQL_TERMS_URL,
+                "setup_url": CODEQL_SETUP_URL,
+            }
+            print(json.dumps(output, indent=2))
+        else:
+            print("GitHub CodeQL")
+            print("  Status:      AVAILABLE")
+            print("  Environment: SecOps worker")
+            print(f"  Version:     {version}")
+            print()
+            print("CodeQL is an optional third-party integration. Its use is subject to GitHub's CodeQL Terms and Conditions.")
+        return 0
+
+    if args.json:
+        output = {
+            "scanner": "codeql",
+            "status": "unavailable",
+            "environment": "worker",
+            "version": None,
+            "distributed_by_secops": False,
+            "terms_url": CODEQL_TERMS_URL,
+            "setup_url": CODEQL_SETUP_URL,
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print("GitHub CodeQL")
+        print("  Status:      NOT AVAILABLE")
+        print("  Environment: SecOps worker")
+        print()
+        print("CodeQL is an optional third-party integration that is not distributed or installed by SecOps Orchestrator.")
+        print()
+        print("Before using CodeQL:")
+        print(f"1. Review GitHub's CodeQL Terms and Conditions:\n   {CODEQL_TERMS_URL}")
+        print(f"2. Follow GitHub's official CodeQL installation documentation:\n   {CODEQL_SETUP_URL}")
+        print("3. Make the CodeQL installation available inside the SecOps worker.")
+        print("4. Run: secops codeql\n   again to verify the integration.")
+        print()
+        print("SecOps Orchestrator grants no rights to use CodeQL.")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace, api: ApiClient) -> int:
     repo_root = get_secops_repo_root()
     compose_base = ["docker", "compose"]
@@ -1151,11 +1280,39 @@ def cmd_doctor(args: argparse.Namespace, api: ApiClient) -> int:
     # 5. Worker
     check_service("worker", "Worker")
 
+    # Check CodeQL in worker
+    try:
+        ps_cql = subprocess.run(
+            compose_base + ["ps", "-q", "worker"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if ps_cql.returncode == 0 and ps_cql.stdout.strip():
+            cql_res = subprocess.run(
+                compose_base + ["exec", "-T", "worker", "codeql", "version", "--format=json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if cql_res.returncode == 0:
+                cql_ver = parse_codeql_version(cql_res.stdout) or "available"
+                print(f"[✓] CodeQL: {cql_ver} (worker)")
+            else:
+                print("[○] CodeQL: optional, not available in worker")
+                print("    Run 'secops codeql' for setup guidance")
+        else:
+            print("[○] CodeQL: optional, not available in worker")
+            print("    Run 'secops codeql' for setup guidance")
+    except Exception:
+        print("[○] CodeQL: optional, not available in worker")
+        print("    Run 'secops codeql' for setup guidance")
+
     # 6. PostgreSQL
     check_service("postgres", "PostgreSQL")
 
-    # 7. Redis
-    check_service("redis", "Redis")
+    # 7. Valkey
+    check_service("redis", "Valkey")
 
     return 0 if all_ok else 1
 
@@ -1216,6 +1373,17 @@ def build_parser() -> argparse.ArgumentParser:
     # doctor
     subparsers.add_parser("doctor", help="Inspect local environment and infrastructure health")
 
+    # codeql
+    codeql_p = subparsers.add_parser(
+        "codeql",
+        help="Check GitHub CodeQL availability in worker and view setup guidance",
+        description=(
+            "Inspect GitHub CodeQL availability inside the SecOps worker and view setup guidance. "
+            "CodeQL is an optional third-party integration and is NOT installed or distributed by SecOps Orchestrator."
+        ),
+    )
+    codeql_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
     return parser
 
 
@@ -1241,9 +1409,11 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_findings(args, api)
         elif args.command == "doctor":
             return cmd_doctor(args, api)
+        elif args.command == "codeql":
+            return cmd_codeql(args, api)
         else:
-            parser.print_help()
-            return 0
+             parser.print_help()
+             return 0
     except Exception as exc:
         if debug:
             raise

@@ -1,0 +1,13 @@
+# Overlay for mounting a user-provided, host-installed GitHub CodeQL CLI into the worker container.
+# SecOps Orchestrator does NOT download, install, distribute, or license CodeQL.
+#
+# Usage:
+#   export SECOPS_CODEQL_HOME=/absolute/path/to/codeql
+#   docker compose -f docker-compose.yml -f docker-compose.codeql.yml up -d --force-recreate worker
+
+services:
+  worker:
+   volumes:
+     - ${SECOPS_CODEQL_HOME}:/opt/secops-codeql:ro
+   environment:
+      PATH: /opt/secops-codeql:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

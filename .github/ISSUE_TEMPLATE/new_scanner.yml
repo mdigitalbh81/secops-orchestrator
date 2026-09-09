@@ -1,0 +1,121 @@
+name: New scanner integration
+description: Propose integration of a new security scanner
+title: "[Scanner]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for proposing a new scanner integration for SecOps Orchestrator!
+        All scanner integrations must preserve execution isolation and licensing compliance.
+  - type: input
+    id: scanner-name
+    attributes:
+      label: Scanner name
+      description: Official name and binary identifier of the scanner.
+      placeholder: e.g. Gitleaks, Checkov, Trivy
+    validations:
+      required: true
+  - type: input
+    id: upstream-url
+    attributes:
+      label: Upstream project URL
+      description: Link to project repository, documentation, or homepage.
+      placeholder: https://github.com/org/project
+    validations:
+      required: true
+  - type: textarea
+    id: what-does-it-detect
+    attributes:
+      label: What does it detect?
+      description: Vulnerability classes, manifest files, code patterns, or runtime endpoints analyzed.
+      placeholder: Describe target artifacts and detection capabilities...
+    validations:
+      required: true
+  - type: dropdown
+    id: scanner-category
+    attributes:
+      label: Scanner category
+      description: Primary category of this scanner tool.
+      options:
+        - SAST
+        - SCA
+        - Container
+        - IaC
+        - Secrets
+        - DAST
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: integration-model
+    attributes:
+      label: Integration model
+      description: Proposed delivery and execution model within SecOps Orchestrator.
+      options:
+        - bundled in image
+        - installed during image build
+        - optional external CLI
+        - remote service/API
+        - not sure
+    validations:
+      required: true
+  - type: input
+    id: license-terms
+    attributes:
+      label: License / terms
+      description: Upstream tool license (e.g. Apache-2.0, MIT, GPLv3, Commercial).
+      placeholder: e.g. Apache-2.0, MIT
+    validations:
+      required: true
+  - type: textarea
+    id: why-integrate
+    attributes:
+      label: Why should SecOps Orchestrator integrate it?
+      description: Value proposition, unique findings, or ecosystem adoption.
+      placeholder: Explain why this tool should be added...
+    validations:
+      required: true
+  - type: dropdown
+    id: expected-output-format
+    attributes:
+      label: Expected output format
+      description: Raw output format parsed into NormalizedFinding schema.
+      options:
+        - SARIF
+        - JSON
+        - JSONL
+        - text
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: security-considerations
+    attributes:
+      label: Security considerations
+      description: Execution requirements, resource limits, network egress needs, or privileges.
+      placeholder: Outline runtime safety considerations...
+    validations:
+      required: true
+  - type: textarea
+    id: licensing-compliance
+    attributes:
+      label: Licensing/compliance considerations
+      description: Redistribution restrictions, commercial terms, or patent provisions.
+      placeholder: Detail any licensing or distribution constraints...
+    validations:
+      required: true
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation notes / references
+      description: CLI command examples, output samples, or documentation references.
+      placeholder: Example CLI commands, JSON snippets, documentation links...
+  - type: checkboxes
+    id: scanner-acknowledgements
+    attributes:
+      label: Compliance Acknowledgements
+      options:
+        - label: I have reviewed the scanner's upstream license and terms.
+          required: true
+        - label: I understand that proposing a scanner does not mean SecOps Orchestrator will automatically bundle or redistribute it.
+          required: true

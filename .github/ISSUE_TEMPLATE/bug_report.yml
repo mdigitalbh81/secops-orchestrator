@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a reproducible problem in SecOps Orchestrator
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide details to help reproduce and resolve the problem.
+        Do not include secrets, credentials, tokens, private keys, or sensitive production data.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Clear and concise description of the bug or unexpected behavior.
+      placeholder: Describe the problem...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen instead.
+      placeholder: Describe the expected behavior...
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps to reproduce the issue.
+      placeholder: |
+        1. Run '...'
+        2. See error '...'
+    validations:
+      required: true
+  - type: input
+    id: secops-version
+    attributes:
+      label: SecOps version
+      description: Git commit hash, release tag, or branch.
+      placeholder: e.g. 467705e, main
+  - type: dropdown
+    id: execution-mode
+    attributes:
+      label: Execution mode
+      description: Execution mode used when the issue occurred.
+      options:
+        - SOURCE
+        - SOURCE_AND_DAST
+        - DAST_ONLY
+        - Not sure
+  - type: input
+    id: os-environment
+    attributes:
+      label: Operating system / environment
+      description: OS version and architecture.
+      placeholder: e.g. Ubuntu 24.04 LTS, macOS 14.5
+  - type: input
+    id: docker-compose-version
+    attributes:
+      label: Docker / Compose version
+      description: Installed Docker and Compose versions if applicable.
+      placeholder: e.g. Docker 27.1, Docker Compose 2.29
+  - type: textarea
+    id: relevant-logs
+    attributes:
+      label: Relevant logs
+      description: Terminal logs or traceback. Redact and remove all secrets, tokens, credentials, and private URLs before submitting.
+      placeholder: Paste sanitized logs here...
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Any other context, configuration, or environment notes.
+  - type: checkboxes
+    id: data-hygiene
+    attributes:
+      label: Data Hygiene Confirmation
+      options:
+        - label: I have removed all secrets, credentials, tokens, private keys, and sensitive data from this report.
+          required: true

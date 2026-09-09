@@ -457,6 +457,25 @@ timeline
 - **Phase 3 (PLANNED)**: OWASP ZAP (DAST), Nuclei engine, staging deployment security orchestration, ephemeral scan environments.
 - **Phase 4 (PLANNED)**: Strix / Pentx automated PoC validation, GitHub PR Security Gates, automated remediation PRs, React Web Dashboard.
 
+---
+
+## Contributions Welcome
+
+Contributions are welcome for bug fixes, documentation, tests, scanner integrations, CLI improvements, and DevSecOps integrations. SecOps Orchestrator is a source-available project.
+
+```
+Fork -> Branch -> Test -> Pull Request
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, testing requirements, scanner integration guidance, and licensing expectations.
+
+- [Issues](https://github.com/mdigitalbh81/secops-orchestrator/issues)
+- [Pull Requests](https://github.com/mdigitalbh81/secops-orchestrator/pulls)
+
+New scanner proposals should use the "New scanner integration" issue template.
+
+---
+
 ## License
 
 SecOps Orchestrator is licensed under the **PolyForm Perimeter License 1.0.1** (source-available).

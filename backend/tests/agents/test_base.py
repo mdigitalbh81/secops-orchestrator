@@ -8,7 +8,13 @@ from app.agents.base import (
     AgenticSecurityAdapter,
     CapabilityClass,
 )
-from app.agents.registry import clear_registry, get_agent, get_all_agents, register_agent
+from app.agents.registry import (
+    clear_registry,
+    get_agent,
+    get_all_agents,
+    register_agent,
+    reset_registry,
+)
 from app.scanners.base import NormalizedFinding
 
 
@@ -124,3 +130,4 @@ def test_agent_registry() -> None:
     assert agent.name == "dummy-safe"
     assert len(get_all_agents()) == 1
     clear_registry()
+    reset_registry()

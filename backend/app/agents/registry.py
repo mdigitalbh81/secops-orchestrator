@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.agents.base import AgenticSecurityAdapter
 
-_REGISTRY: dict[str, type[AgenticSecurityAdapter]] = {}
+from app.agents.mantis import MantisAdapter
+
+DEFAULT_AGENTS: dict[str, type[AgenticSecurityAdapter]] = {
+    "mantis": MantisAdapter,
+}
+
+_REGISTRY: dict[str, type[AgenticSecurityAdapter]] = dict(DEFAULT_AGENTS)
 
 
 def register_agent(cls: type[AgenticSecurityAdapter]) -> type[AgenticSecurityAdapter]:
@@ -33,3 +39,9 @@ def get_all_agents() -> list[AgenticSecurityAdapter]:
 def clear_registry() -> None:
     """Clear registered agents (testing helper)."""
     _REGISTRY.clear()
+
+
+def reset_registry() -> None:
+    """Reset registry to default agent adapters."""
+    _REGISTRY.clear()
+    _REGISTRY.update(DEFAULT_AGENTS)

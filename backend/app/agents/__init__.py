@@ -8,14 +8,24 @@ from app.agents.base import (
     AgenticSecurityAdapter,
     CapabilityClass,
 )
-from app.agents.registry import get_agent, get_all_agents, register_agent
+from app.agents.mantis import MantisAdapter
+from app.agents.registry import (
+    clear_registry,
+    get_agent,
+    get_all_agents,
+    register_agent,
+    reset_registry,
+)
 
 __all__ = [
     "AgentCapability",
     "AgentExecutionMode",
     "AgenticSecurityAdapter",
     "CapabilityClass",
+    "MantisAdapter",
+    "clear_registry",
     "get_all_agents",
     "get_agent",
     "register_agent",
+    "reset_registry",
 ]

@@ -1412,6 +1412,44 @@ def cmd_doctor(args: argparse.Namespace, api: ApiClient) -> int:
     return 0 if all_ok else 1
 
 
+def cmd_tools(args: argparse.Namespace, _api: ApiClient) -> int:
+    """Display security toolchain inventory or check upstream for updates."""
+    from app.toolchain import ToolCategory, ToolchainManager
+
+    check_upstream = getattr(args, "tools_action", None) == "check"
+    repo_root = get_secops_repo_root()
+    manager = ToolchainManager(repo_root=repo_root)
+    inventory = manager.get_inventory(check_upstream=check_upstream)
+
+    if getattr(args, "json", False):
+        print(json.dumps([t.to_dict() for t in inventory], indent=2))
+        return 0
+
+    headers = ["TOOL", "CATEGORY", "INSTALLED", "CONFIGURED", "AVAILABLE", "STATUS"]
+    rows: list[list[str]] = []
+    for t in inventory:
+        installed = t.installed_version or "-"
+        configured = t.configured_version or "-"
+        available = t.available_version or (
+            "UNKNOWN" if check_upstream and t.category == ToolCategory.ENGINE else "-"
+        )
+        status = t.status.value
+        rows.append([t.name, t.category.value, installed, configured, available, status])
+
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(val))
+
+    header_line = "  ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
+    print(header_line)
+    print("  ".join("-" * col_widths[i] for i in range(len(headers))))
+    for row in rows:
+        print("  ".join(val.ljust(col_widths[i]) for i, val in enumerate(row)))
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="secops",
@@ -1479,6 +1517,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     codeql_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
+    # tools
+    tools_p = subparsers.add_parser(
+        "tools",
+        help="Inspect security toolchain versions and update availability",
+        description="Inspect security toolchain components (engines, knowledge bases, agents).",
+    )
+    tools_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    tools_sub = tools_p.add_subparsers(dest="tools_action", metavar="<action>")
+    check_p = tools_sub.add_parser(
+        "check",
+        help="Check upstream for available tool updates",
+        description="Check upstream for available tool updates.",
+    )
+    check_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
     return parser
 
 
@@ -1506,6 +1559,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_doctor(args, api)
         elif args.command == "codeql":
             return cmd_codeql(args, api)
+        elif args.command == "tools":
+            return cmd_tools(args, api)
         else:
             parser.print_help()
             return 0

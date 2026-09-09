@@ -7,6 +7,7 @@ from app.security.runner import (
     RunnerConfig,
     RunnerSecurityError,
     run_command,
+    run_command_sync,
     validate_command,
     validate_path,
 )
@@ -111,3 +112,42 @@ async def test_run_command_max_output(tmp_path: Path):
         config=RunnerConfig(timeout=5, max_output_bytes=50, allowed_roots=[tmp_path]),
     )
     assert len(result.stdout) == 50
+def test_run_command_sync_basic(tmp_path: Path) -> None:
+    result = run_command_sync(
+        [sys.executable, "-c", "print('hello secops sync')"],
+        cwd=tmp_path,
+        config=RunnerConfig(timeout=5, allowed_roots=[tmp_path]),
+    )
+    assert result.return_code == 0
+    assert "hello secops sync" in result.stdout
+    assert not result.timed_out
+
+
+def test_run_command_sync_not_found(tmp_path: Path) -> None:
+    result = run_command_sync(
+        ["nonexistent_scanner_bin_99999"],
+        cwd=tmp_path,
+        config=RunnerConfig(timeout=5, allowed_roots=[tmp_path]),
+    )
+    assert result.return_code == -1
+    assert "Command not found" in result.stderr
+
+
+def test_run_command_sync_timeout(tmp_path: Path) -> None:
+    result = run_command_sync(
+        [sys.executable, "-c", "while True: pass"],
+        cwd=tmp_path,
+        config=RunnerConfig(timeout=1, allowed_roots=[tmp_path]),
+    )
+    assert result.timed_out
+    assert result.return_code == -1
+    assert "Command timed out" in result.stderr
+
+
+def test_run_command_sync_dangerous_rejected(tmp_path: Path) -> None:
+    with pytest.raises(RunnerSecurityError, match="Dangerous characters"):
+        run_command_sync(
+            ["echo", "hello; rm -rf /"],
+            cwd=tmp_path,
+            config=RunnerConfig(timeout=5, allowed_roots=[tmp_path]),
+        )

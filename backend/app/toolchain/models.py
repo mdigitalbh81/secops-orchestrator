@@ -26,6 +26,16 @@ class ToolStatus(enum.StrEnum):
     ERROR = "ERROR"
 
 
+class RuntimeSource(enum.StrEnum):
+    """Execution runtime origin for a toolchain component."""
+
+    HOST = "HOST"
+    WORKER = "WORKER"
+    EXTERNAL = "EXTERNAL"
+    CONTAINER = "CONTAINER"
+    CONFIG_ONLY = "CONFIG_ONLY"
+
+
 @dataclass
 class ToolInfo:
     """Structured inventory entry for a toolchain component."""
@@ -39,6 +49,7 @@ class ToolInfo:
     update_policy: str
     availability: str
     status: ToolStatus
+    runtime_source: RuntimeSource = RuntimeSource.WORKER
     notes: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,4 +57,8 @@ class ToolInfo:
         data = asdict(self)
         data["category"] = self.category.value
         data["status"] = self.status.value
+        if hasattr(self.runtime_source, "value"):
+            data["runtime_source"] = self.runtime_source.value
+        else:
+            data["runtime_source"] = str(self.runtime_source)
         return data

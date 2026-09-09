@@ -69,7 +69,7 @@ All direct runtime dependencies specified in `backend/pyproject.toml` (`[project
 - **Status**: External, optional, and not distributed or installed by SecOps Orchestrator.
 - **Terms**: GitHub CodeQL CLI is proprietary software governed by GitHub's own terms ([GitHub CodeQL Terms and Conditions](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md) and [GitHub Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)).
 - **User Responsibility**: Users who choose to download, install, or enable CodeQL in their environment are solely responsible for obtaining any necessary license and ensuring their use strictly complies with GitHub's CodeQL Terms and Conditions. SecOps Orchestrator grants no rights, licenses, or warranties for the use of CodeQL.
- - **Availability Behavior**: SecOps Orchestrator detects whether the `codeql` binary is available in `PATH`. When absent, it records status as `UNAVAILABLE` and continues scan execution without error.
+- **Availability Behavior**: SecOps Orchestrator detects whether the `codeql` binary is available in `PATH`. When absent, it records status as `UNAVAILABLE` and continues scan execution without error.
 
 ### Special Notice: Google Mantis
 **Status**: Integration contract foundation and finding ingestion schema only. NOT bundled, downloaded, or distributed in SecOps Orchestrator images.

@@ -1425,7 +1425,7 @@ def cmd_tools(args: argparse.Namespace, _api: ApiClient) -> int:
         print(json.dumps([t.to_dict() for t in inventory], indent=2))
         return 0
 
-    headers = ["TOOL", "CATEGORY", "INSTALLED", "CONFIGURED", "AVAILABLE", "STATUS"]
+    headers = ["TOOL", "CATEGORY", "RUNTIME", "INSTALLED", "CONFIGURED", "AVAILABLE", "STATUS"]
     rows: list[list[str]] = []
     for t in inventory:
         installed = t.installed_version or "-"
@@ -1434,7 +1434,12 @@ def cmd_tools(args: argparse.Namespace, _api: ApiClient) -> int:
             "UNKNOWN" if check_upstream and t.category == ToolCategory.ENGINE else "-"
         )
         status = t.status.value
-        rows.append([t.name, t.category.value, installed, configured, available, status])
+        runtime = (
+            t.runtime_source.value
+            if hasattr(t.runtime_source, "value")
+            else str(t.runtime_source)
+        )
+        rows.append([t.name, t.category.value, runtime, installed, configured, available, status])
 
     col_widths = [len(h) for h in headers]
     for row in rows:

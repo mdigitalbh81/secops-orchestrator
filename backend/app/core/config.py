@@ -87,9 +87,6 @@ class Settings(BaseSettings):
     mantis_execution_mode: str = Field(
         default="disabled", validation_alias="SECOPS_MANTIS_EXECUTION_MODE"
     )
-    mantis_reproduce: bool = Field(default=False, validation_alias="SECOPS_MANTIS_REPRODUCE")
-    mantis_chain: bool = Field(default=False, validation_alias="SECOPS_MANTIS_CHAIN")
-    mantis_patch: bool = Field(default=False, validation_alias="SECOPS_MANTIS_PATCH")
 
     def get_dast_allowed_hosts(self) -> list[str]:
         """Return list of allowed hosts for DAST scanning."""

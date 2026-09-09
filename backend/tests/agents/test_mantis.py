@@ -182,3 +182,142 @@ def test_mantis_ingest_malformed_and_partial_input() -> None:
     assert findings[0].severity == Severity.UNKNOWN
     assert findings[0].confidence == 0.45
     assert findings[0].evidence_level == EvidenceLevel.SINGLE_SOURCE
+def test_mantis_ingest_false_positive_preserves_status():
+    adapter = MantisAdapter()
+    sample = {
+        "title": "False Positive finding from Mantis",
+        "description": "Analysis determined this is a false positive.",
+        "status": "FALSE_POSITIVE",
+        "severity": "LOW",
+        "file_path": "app/utils.py",
+        "line_start": 10,
+    }
+    findings = adapter.ingest_findings(sample)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.status == FindingStatus.FALSE_POSITIVE
+    assert f.status != FindingStatus.OPEN
+    assert f.raw_data["mantis_status"] == "FALSE_POSITIVE"
+
+
+def test_mantis_ingest_duplicate_when_primary_present():
+    adapter = MantisAdapter()
+    payload = {
+        "findings": [
+            {
+                "id": "mantis-vuln-01",
+                "title": "SQL Injection in User Service",
+                "description": "User input concatenated directly.",
+                "status": "VALID",
+                "severity": "HIGH",
+                "file_path": "app/users.py",
+                "line_start": 20,
+            },
+            {
+                "id": "mantis-vuln-02",
+                "title": "SQL Injection in User Service (Duplicate)",
+                "description": "Duplicate finding from secondary query.",
+                "status": "DUPLICATE",
+                "duplicate_of": "mantis-vuln-01",
+                "severity": "HIGH",
+                "file_path": "app/users.py",
+                "line_start": 20,
+            },
+        ]
+    }
+    findings = adapter.ingest_findings(payload)
+    # Duplicate with primary in batch must NOT create a second actionable finding
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.status == FindingStatus.OPEN
+    # Duplicate information attached to primary
+    assert len(f.evidences) == 2
+    assert "duplicates" in f.raw_data
+    assert len(f.raw_data["duplicates"]) == 1
+    assert f.raw_data["duplicates"][0]["id"] == "mantis-vuln-02"
+
+
+def test_mantis_ingest_duplicate_standalone_not_open():
+    adapter = MantisAdapter()
+    sample = {
+        "id": "mantis-dup-standalone",
+        "title": "Unlinked Duplicate Issue",
+        "description": "Mantis flagged as duplicate without parent in payload.",
+        "status": "DUPLICATE",
+        "severity": "MEDIUM",
+        "file_path": "app/auth.py",
+    }
+    findings = adapter.ingest_findings(sample)
+    assert len(findings) == 1
+    f = findings[0]
+    # Standalone duplicate must NOT be an open actionable finding
+    assert f.status != FindingStatus.OPEN
+    assert f.status == FindingStatus.ACCEPTED_BY_DESIGN
+    assert f.raw_data["mantis_status"] == "DUPLICATE"
+    assert f.raw_data["is_duplicate"] is True
+
+
+def test_mantis_ingest_malformed_line_numbers_safe():
+    adapter = MantisAdapter()
+    sample = {
+        "title": "Type confusion in lines",
+        "file_path": "app/test.py",
+        "line_start": {"line": 42},  # dict instead of int
+        "line_end": [100],  # list instead of int
+    }
+    findings = adapter.ingest_findings(sample)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.line_start is None
+    assert f.line_end is None
+
+    # String numeric normalization
+    sample_numeric_str = {
+        "title": "Numeric string lines",
+        "file_path": "app/test.py",
+        "line_start": "55",
+        "line_end": "60",
+    }
+    findings2 = adapter.ingest_findings(sample_numeric_str)
+    assert len(findings2) == 1
+    assert findings2[0].line_start == 55
+    assert findings2[0].line_end == 60
+
+    # Non-numeric string lines
+    sample_bad_str = {
+        "title": "Bad string lines",
+        "file_path": "app/test.py",
+        "line_start": "line_fifty_five",
+        "line_end": "invalid",
+    }
+    findings3 = adapter.ingest_findings(sample_bad_str)
+    assert len(findings3) == 1
+    assert findings3[0].line_start is None
+    assert findings3[0].line_end is None
+
+    # Boolean lines rejected (bool is subclass of int)
+    sample_bool = {
+        "title": "Boolean lines",
+        "file_path": "app/test.py",
+        "line_start": True,
+        "line_end": False,
+    }
+    findings4 = adapter.ingest_findings(sample_bool)
+    assert len(findings4) == 1
+    assert findings4[0].line_start is None
+    assert findings4[0].line_end is None
+
+
+def test_mantis_repro_status_never_promotes_runtime_validated():
+    adapter = MantisAdapter()
+    sample = {
+        "title": "Claimed verified PoC",
+        "repro_status": "reproduced",
+        "file_path": "app/core.py",
+        "line_start": 1,
+    }
+    findings = adapter.ingest_findings(sample)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert f.evidence_level != EvidenceLevel.RUNTIME_VALIDATED

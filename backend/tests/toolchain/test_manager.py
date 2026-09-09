@@ -1,17 +1,18 @@
+"""Tests for security toolchain inventory manager."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
+from app.security.runner import RunResult
 from app.toolchain.manager import (
     ToolchainManager,
     compare_versions,
     parse_semantic_version,
 )
-from app.toolchain.models import ToolCategory, ToolInfo, ToolStatus
+from app.toolchain.models import RuntimeSource, ToolCategory, ToolInfo, ToolStatus
 
 
 def test_parse_semantic_version() -> None:
@@ -44,13 +45,16 @@ def test_tool_info_to_dict_serialization() -> None:
         availability="available",
         status=ToolStatus.UPDATE_AVAILABLE,
         notes="Test note",
+        runtime_source=RuntimeSource.WORKER,
     )
     data = info.to_dict()
     assert data["name"] == "Semgrep"
     assert data["category"] == "ENGINE"
     assert data["status"] == "UPDATE_AVAILABLE"
     assert data["installed_version"] == "1.70.0"
-    # Verifies standard JSON serialization without errors
+    assert data["runtime_source"] == "WORKER"
+
+    # Standard JSON serialization without errors
     serialized = json.dumps(data)
     assert "UPDATE_AVAILABLE" in serialized
 
@@ -69,7 +73,6 @@ def test_detect_configured_versions_from_files(tmp_path: Path) -> None:
 
     mgr = ToolchainManager(repo_root=tmp_path)
     cfg = mgr.detect_configured_versions()
-
     assert cfg["nuclei"] == "3.5.0"
     assert cfg["nuclei_templates"] == "10.6.0"
     assert cfg["zap"] == "2.18.0"
@@ -81,8 +84,12 @@ def test_detect_configured_versions_from_files(tmp_path: Path) -> None:
 def test_run_safe_tool_command_timeout() -> None:
     mgr = ToolchainManager()
     with (
-        patch("shutil.which", return_value="/usr/bin/mock_tool"),
-        patch("subprocess.run", side_effect=pytest.importorskip("subprocess").TimeoutExpired("cmd", 5)),
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(-1, "", "Worker command timed out"),
+        ),
     ):
         rc, stdout, stderr = mgr.run_safe_tool_command(["mock_tool", "--version"])
         assert rc == -1
@@ -91,10 +98,7 @@ def test_run_safe_tool_command_timeout() -> None:
 
 def test_run_safe_tool_command_missing() -> None:
     mgr = ToolchainManager()
-    with (
-        patch("shutil.which", return_value=None),
-        patch.object(mgr, "is_worker_running", return_value=False),
-    ):
+    with patch.object(mgr, "is_worker_running", return_value=False):
         rc, stdout, stderr = mgr.run_safe_tool_command(["nonexistent_tool", "--version"])
         assert rc == -1
         assert "not found" in stderr.lower()
@@ -103,15 +107,15 @@ def test_run_safe_tool_command_missing() -> None:
 def test_get_inventory_offline_default() -> None:
     mgr = ToolchainManager()
     with (
-        patch.object(mgr, "detect_semgrep", return_value=("1.70.0", None)),
-        patch.object(mgr, "detect_codeql", return_value=(None, "CodeQL not present")),
-        patch.object(mgr, "detect_trivy", return_value=("0.54.0", None)),
-        patch.object(mgr, "detect_pip_audit", return_value=("2.7.0", None)),
-        patch.object(mgr, "detect_npm", return_value=("9.2.0", None)),
-        patch.object(mgr, "detect_nuclei", return_value=("3.3.2", None)),
-        patch.object(mgr, "detect_zap", return_value=("2.17.0", None)),
-        patch.object(mgr, "detect_nuclei_templates", return_value=("10.4.8", None)),
-        patch.object(mgr, "detect_trivy_db", return_value=("v2", None)),
+        patch.object(mgr, "detect_semgrep", return_value=("1.70.0", None, None)),
+        patch.object(mgr, "detect_codeql", return_value=(None, "CodeQL not present", ToolStatus.OPTIONAL)),
+        patch.object(mgr, "detect_trivy", return_value=("0.54.0", None, None)),
+        patch.object(mgr, "detect_pip_audit", return_value=("2.7.0", None, None)),
+        patch.object(mgr, "detect_npm", return_value=("9.2.0", None, None)),
+        patch.object(mgr, "detect_nuclei", return_value=("3.3.2", None, None)),
+        patch.object(mgr, "detect_zap", return_value=("2.17.0", None, None)),
+        patch.object(mgr, "detect_nuclei_templates", return_value=("10.4.8", None, None)),
+        patch.object(mgr, "detect_trivy_db", return_value=("v2", None, ToolStatus.CURRENT)),
     ):
         inventory = mgr.get_inventory(check_upstream=False)
 
@@ -127,7 +131,6 @@ def test_get_inventory_offline_default() -> None:
     assert "Trivy DB" in names
     assert "Mantis" in names
 
-    # Offline status checks: installed tools have status UNKNOWN (no upstream checked)
     by_name = {t.name: t for t in inventory}
     assert by_name["Semgrep"].status == ToolStatus.UNKNOWN
     assert by_name["Semgrep"].installed_version == "1.70.0"
@@ -136,18 +139,21 @@ def test_get_inventory_offline_default() -> None:
     # CodeQL remains OPTIONAL when not installed
     assert by_name["CodeQL"].status == ToolStatus.OPTIONAL
     assert by_name["CodeQL"].installed_version is None
+    assert by_name["CodeQL"].runtime_source == RuntimeSource.EXTERNAL
 
-    # Mantis is OPTIONAL and disabled
+    # Mantis OPTIONAL disabled, no available_version offline
     assert by_name["Mantis"].status == ToolStatus.OPTIONAL
     assert by_name["Mantis"].installed_version is None
+    assert by_name["Mantis"].available_version is None
+    assert by_name["Mantis"].runtime_source == RuntimeSource.CONFIG_ONLY
 
 
 def test_get_inventory_with_upstream_updates() -> None:
     mgr = ToolchainManager()
     with (
-        patch.object(mgr, "detect_semgrep", return_value=("1.70.0", None)),
-        patch.object(mgr, "detect_nuclei", return_value=("3.3.2", None)),
-        patch.object(mgr, "detect_codeql", return_value=("2.19.0", None)),
+        patch.object(mgr, "detect_semgrep", return_value=("1.70.0", None, None)),
+        patch.object(mgr, "detect_nuclei", return_value=("3.3.2", None, None)),
+        patch.object(mgr, "detect_codeql", return_value=("2.19.0", "User-provided mount", ToolStatus.UNKNOWN)),
         patch.object(mgr, "check_upstream_version") as mock_check,
     ):
         def side_effect(tool_id: str) -> str | None:
@@ -163,12 +169,12 @@ def test_get_inventory_with_upstream_updates() -> None:
     by_name = {t.name: t for t in inventory}
     assert by_name["Semgrep"].status == ToolStatus.UPDATE_AVAILABLE
     assert by_name["Semgrep"].available_version == "1.75.0"
-
     assert by_name["Nuclei"].status == ToolStatus.CURRENT
     assert by_name["Nuclei"].available_version == "3.3.2"
-
-    assert by_name["CodeQL"].status == ToolStatus.CURRENT
+    # CodeQL present is UNKNOWN (user-managed without upstream check, not false CURRENT)
+    assert by_name["CodeQL"].status == ToolStatus.UNKNOWN
     assert by_name["CodeQL"].installed_version == "2.19.0"
+    assert by_name["CodeQL"].availability == "available"
 
 
 def test_check_upstream_version_graceful_network_failure() -> None:
@@ -176,3 +182,222 @@ def test_check_upstream_version_graceful_network_failure() -> None:
     with patch("urllib.request.urlopen", side_effect=OSError("Network unreachable")):
         ver = mgr.check_upstream_version("semgrep")
         assert ver is None
+
+
+# =========================================================================
+# New required tests from PR #15 Review
+# =========================================================================
+
+
+def test_toolchain_runtime_source_worker_authoritative() -> None:
+    """Host has semgrep 1.50.0, worker has 1.176.1 -> inventory reports worker version."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch("shutil.which", return_value="/usr/bin/semgrep"),  # host binary exists
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(0, "1.176.1\n", ""),  # worker returns authoritative version
+        ),
+    ):
+        ver, notes, st = mgr.detect_semgrep()
+        assert ver == "1.176.1"
+        assert st is None
+
+
+def test_toolchain_runtime_source_host_codeql_worker_absent() -> None:
+    """Host CodeQL exists, worker CodeQL absent -> SecOps must NOT report available."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch("shutil.which", return_value="/usr/local/bin/codeql"),  # on host
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(1, "", "which: no codeql in PATH"),  # not in worker
+        ),
+    ):
+        ver, notes, st = mgr.detect_codeql()
+        assert ver is None
+        assert st == ToolStatus.OPTIONAL
+        assert "not mounted in worker" in (notes or "").lower()
+
+        inventory = mgr.get_inventory(check_upstream=False)
+        by_name = {t.name: t for t in inventory}
+        assert by_name["CodeQL"].status == ToolStatus.OPTIONAL
+        assert by_name["CodeQL"].installed_version is None
+        assert by_name["CodeQL"].availability == "optional"
+
+
+def test_toolchain_runtime_source_worker_unavailable() -> None:
+    """Worker unavailable -> host version must not masquerade as worker version."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "is_worker_running", return_value=False),
+        patch("shutil.which", return_value="/usr/bin/npm"),  # host has npm
+    ):
+        ver, notes, st = mgr.detect_npm()
+        assert ver is None
+        assert st == ToolStatus.UNKNOWN
+
+        inventory = mgr.get_inventory(check_upstream=False)
+        by_name = {t.name: t for t in inventory}
+        assert by_name["npm"].installed_version is None
+        assert by_name["npm"].status == ToolStatus.UNKNOWN
+        assert by_name["npm"].availability == "unavailable"
+
+
+def test_worker_metadata_nuclei_templates_read_worker() -> None:
+    """Nuclei templates metadata is read directly from worker container."""
+    mgr = ToolchainManager()
+    payload = json.dumps({"nuclei-templates-version": "v10.4.8"})
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(0, payload, ""),
+        ) as mock_cmd,
+    ):
+        ver, notes, st = mgr.detect_nuclei_templates()
+        assert ver == "10.4.8"
+        # Must execute cat in worker
+        mock_cmd.assert_called_once_with(
+            ["cat", "/home/secops/.config/nuclei/.templates-config.json"],
+            timeout=5,
+        )
+
+
+def test_worker_metadata_trivy_read_worker() -> None:
+    """Trivy DB metadata is read directly from worker container with freshness evaluation."""
+    mgr = ToolchainManager()
+    payload = json.dumps({
+        "Version": 2,
+        "NextUpdate": "2099-01-01T00:00:00Z",
+        "UpdatedAt": "2099-01-01T00:00:00Z",
+    })
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(0, payload, ""),
+        ) as mock_cmd,
+    ):
+        ver, notes, st = mgr.detect_trivy_db()
+        assert "v2" in (ver or "")
+        assert st == ToolStatus.CURRENT
+        mock_cmd.assert_called_once_with(
+            ["cat", "/home/secops/.cache/trivy/db/metadata.json"],
+            timeout=5,
+        )
+
+
+def test_status_semantics_installed_upstream_unavailable() -> None:
+    """Tool is installed but upstream check fails -> status must be UNKNOWN, not CURRENT."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "detect_semgrep", return_value=("1.70.0", None, None)),
+        patch.object(mgr, "check_upstream_version", return_value=None),  # upstream unavailable
+    ):
+        inventory = mgr.get_inventory(check_upstream=True)
+        by_name = {t.name: t for t in inventory}
+        assert by_name["Semgrep"].status == ToolStatus.UNKNOWN
+        assert by_name["Semgrep"].installed_version == "1.70.0"
+
+
+def test_status_semantics_executable_absent_is_not_installed() -> None:
+    """Truly absent executable -> NOT_INSTALLED."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(127, "", "sh: semgrep: not found"),
+        ),
+    ):
+        ver, notes, st = mgr.detect_semgrep()
+        assert ver is None
+        assert st == ToolStatus.NOT_INSTALLED
+
+
+def test_status_semantics_executable_malformed_output_is_error() -> None:
+    """Executable runs (exit 0) but output cannot be parsed -> ERROR, not NOT_INSTALLED."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(0, "unexpected binary output with no version numbers", ""),
+        ),
+    ):
+        ver, notes, st = mgr.detect_semgrep()
+        assert ver is None
+        assert st == ToolStatus.ERROR
+
+
+def test_status_semantics_executable_command_failure_is_error() -> None:
+    """Executable crashes / exits non-zero -> ERROR, not NOT_INSTALLED."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "is_worker_running", return_value=True),
+        patch.object(
+            mgr,
+            "run_worker_command",
+            return_value=(1, "", "Fatal error: segmentation fault"),
+        ),
+    ):
+        ver, notes, st = mgr.detect_semgrep()
+        assert ver is None
+        assert st == ToolStatus.ERROR
+
+
+def test_mantis_offline_tools_no_available_version() -> None:
+    """Mantis in offline mode does NOT claim DEFAULT_REVISION as latest/available."""
+    mgr = ToolchainManager()
+    with patch.object(mgr, "check_upstream_version") as mock_check:
+        inventory = mgr.get_inventory(check_upstream=False)
+        mock_check.assert_not_called()
+
+    by_name = {t.name: t for t in inventory}
+    assert by_name["Mantis"].installed_version is None
+    assert by_name["Mantis"].available_version is None
+    assert by_name["Mantis"].status == ToolStatus.OPTIONAL
+
+
+def test_mantis_check_upstream_success() -> None:
+    """Mantis in check mode discovers upstream revision via read-only check."""
+    mgr = ToolchainManager()
+    with patch.object(
+        mgr,
+        "_check_mantis_upstream",
+        return_value="d13c93fb8e9779801711daea0d65fffa133c3b2d",
+    ):
+        inventory = mgr.get_inventory(check_upstream=True)
+
+    by_name = {t.name: t for t in inventory}
+    assert by_name["Mantis"].available_version == "d13c93fb"
+    assert by_name["Mantis"].status == ToolStatus.OPTIONAL
+
+
+def test_mantis_check_upstream_failure() -> None:
+    """Mantis in check mode gracefully handles upstream check failure."""
+    mgr = ToolchainManager()
+    with patch.object(mgr, "_check_mantis_upstream", return_value=None):
+        inventory = mgr.get_inventory(check_upstream=True)
+
+    by_name = {t.name: t for t in inventory}
+    assert by_name["Mantis"].available_version is None
+    assert by_name["Mantis"].status == ToolStatus.OPTIONAL
+
+
+def test_security_runner_boundary_enforced() -> None:
+    """Toolchain manager invokes commands through run_command_sync, never direct subprocess."""
+    mgr = ToolchainManager()
+    with patch("app.toolchain.manager.run_command_sync") as mock_sync:
+        mock_sync.return_value = RunResult(return_code=0, stdout="container-id\n", stderr="")
+        mgr.is_worker_running()
+        assert mock_sync.called

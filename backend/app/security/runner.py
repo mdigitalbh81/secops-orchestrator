@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -155,3 +156,58 @@ async def run_command(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+def run_command_sync(
+    argv: list[str],
+    cwd: Path | None = None,
+    config: RunnerConfig | None = None,
+) -> RunResult:
+    """Execute a command synchronously and securely in a subprocess.
+
+    Enforces the same invariants as run_command:
+    no shell=True, validated arguments, timeouts, output limits, sanitized environment.
+    """
+    if config is None:
+        settings = get_settings()
+        config = RunnerConfig(
+            timeout=settings.scanner_timeout,
+            max_output_bytes=settings.scanner_max_output_bytes,
+            allowed_roots=[settings.allowed_workspace_root] if settings.allowed_workspace_root else [],
+        )
+
+    validate_command(argv)
+
+    if cwd is not None:
+        cwd = validate_path(cwd, config.allowed_roots)
+        if not cwd.is_dir():
+            raise RunnerSecurityError(f"Working directory does not exist: {cwd}")
+
+    env = os.environ.copy()
+    for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES"):
+        env.pop(key, None)
+    env.update(config.env_override)
+
+    logger.info("Running sync command: %s (cwd=%s)", argv, cwd)
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            cwd=str(cwd) if cwd else None,
+            env=env,
+            timeout=config.timeout,
+            check=False,
+        )
+        stdout = proc.stdout[: config.max_output_bytes].decode("utf-8", errors="replace")
+        stderr = proc.stderr[: config.max_output_bytes].decode("utf-8", errors="replace")
+        return RunResult(
+            return_code=proc.returncode if proc.returncode is not None else 0,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    except FileNotFoundError:
+        return RunResult(return_code=-1, stdout="", stderr=f"Command not found: {argv[0]}")
+    except PermissionError:
+        return RunResult(return_code=-1, stdout="", stderr=f"Permission denied: {argv[0]}")
+    except subprocess.TimeoutExpired:
+        return RunResult(return_code=-1, stdout="", stderr="Command timed out", timed_out=True)

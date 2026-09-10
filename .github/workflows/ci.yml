@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-validation:
+    name: Python Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./backend[dev]"
+
+      - name: Run Ruff linter
+        run: |
+          python -m ruff check .
+
+      - name: Run canonical pytest suite
+        run: |
+          python -m pytest -c backend/pyproject.toml
+
+      - name: Validate single Alembic head
+        run: |
+          cd backend
+          HEAD_OUTPUT=$(python -m alembic heads)
+          echo "$HEAD_OUTPUT"
+          HEAD_COUNT=$(echo "$HEAD_OUTPUT" | grep -c '(head)' || true)
+          echo "Discovered Alembic heads: $HEAD_COUNT"
+          if [ "$HEAD_COUNT" -ne 1 ]; then
+            echo "Expected exactly 1 Alembic head, found $HEAD_COUNT"
+            exit 1
+          fi
+
+      - name: Validate whitespace errors (git diff --check)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ] && [ -n "${{ github.event.before }}" ]; then
+            BASE_SHA="${{ github.event.before }}"
+          else
+            BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+          fi
+
+          echo "Target base SHA for whitespace check: $BASE_SHA"
+          if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$BASE_SHA...HEAD"
+          else
+            echo "Base SHA not resolvable in commit graph, falling back to HEAD~1 or working tree check"
+            FALLBACK_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+            if [ -n "$FALLBACK_SHA" ]; then
+              git diff --check "$FALLBACK_SHA...HEAD"
+            else
+              git diff --check
+            fi
+          fi
+
+  compose-validation:
+    name: Compose Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Verify Docker Compose version
+        run: |
+          docker compose version
+
+      - name: Validate base Docker Compose config
+        run: |
+          docker compose config --quiet
+
+      - name: Validate CodeQL overlay Compose config syntax
+        run: |
+          # Structural validation only: verifies Compose file syntax, interpolation, and merge.
+          # Does NOT install, download, license, or execute CodeQL or run scans.
+          # CODEQL_REMAINS_EXTERNAL=YES
+          mkdir -p /tmp/secops-codeql
+          SECOPS_CODEQL_HOME=/tmp/secops-codeql docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.codeql.yml \
+            config --quiet
+
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    needs: [python-validation, compose-validation]
+    if: always()
+
+    steps:
+      - name: Evaluate validation gate results
+        run: |
+          echo "Python Validation: ${{ needs.python-validation.result }}"
+          echo "Compose Validation: ${{ needs.compose-validation.result }}"
+          if [ "${{ needs.python-validation.result }}" != "success" ] || [ "${{ needs.compose-validation.result }}" != "success" ]; then
+            echo "CI Gate FAILED: all required validation jobs must succeed."
+            exit 1
+          fi
+          echo "CI Gate PASSED: all required validation jobs succeeded."

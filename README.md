@@ -437,6 +437,29 @@ ruff check .
 
 ---
 
+## Continuous Integration
+
+Pull Requests and pushes to `main` trigger automated quality validation via GitHub Actions (`.github/workflows/ci.yml`). The workflow enforces a fast, deterministic validation gate:
+
+- **Python Validation**:
+  - Ruff linter execution (`python -m ruff check .`)
+  - Canonical pytest test suite (`python -m pytest -c backend/pyproject.toml`)
+  - Whitespace error check (`git diff --check`)
+  - Schema migration integrity ensuring a single Alembic head (`python -m alembic heads`)
+- **Compose Validation**:
+  - Base Docker Compose configuration verification (`docker compose config`)
+  - CodeQL overlay structural validation only (`docker compose -f docker-compose.yml -f docker-compose.codeql.yml config`)
+- **Gate**:
+  - Stable aggregate gate (`CI / Gate`) that succeeds only when all required validation jobs pass.
+
+**Operational Safety Invariants**:
+- The CI gate does not execute DAST.
+- The CI gate does not execute Mantis.
+- The CI gate does not execute CodeQL (the CodeQL overlay check validates Compose configuration syntax only).
+- Passing the CI gate indicates automated test, migration, and configuration conformance; no absolute application security is inferred from a `PASS`.
+
+---
+
 ## API Reference
 
 ### Health Check

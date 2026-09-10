@@ -38,14 +38,21 @@ These names are recommended conventions to help organize work, not rigid policie
 
 ## Testing and Validation
 
-Run standard validation commands before submitting a pull request:
+Pull Requests trigger automated validation gates via GitHub Actions. When branch protection is active, all checks aggregated by `CI / Gate` must pass before merge (branch protection rulesets are configured separately). Contributors must run these same validation commands locally before opening or updating a pull request.
+
+Run standard validation commands using the project's canonical configuration:
 
 ```bash
-cd backend
-pytest
-ruff check .
-cd ..
+# Run canonical pytest test suite
+python -m pytest -c backend/pyproject.toml
+
+# Run Ruff linter
+python -m ruff check .
+
+# Check for whitespace errors
 git diff --check
+
+# Validate base Docker Compose configuration
 docker compose config
 ```
 
@@ -57,7 +64,7 @@ alembic heads
 cd ..
 ```
 
-Current expected alembic head: `005 (head)`.
+Migration rule: there must be **exactly one Alembic head** (the current baseline on `main` is `005 (head)`).
 
 Testing guidelines:
 
@@ -123,9 +130,10 @@ Pull request checklist:
 
 - [ ] Scope is focused on a single logical change
 - [ ] Tests added or updated where needed
-- [ ] `pytest` passes
-- [ ] `ruff check .` passes
-- [ ] `git diff --check` passes
+- [ ] Canonical test suite passes (`python -m pytest -c backend/pyproject.toml`)
+- [ ] Linter passes (`python -m ruff check .`)
+- [ ] Whitespace check passes (`git diff --check`)
+- [ ] Exactly one Alembic head exists (`cd backend && alembic heads && cd ..`)
 - [ ] Docker Compose configuration remains valid (`docker compose config`) when applicable
 - [ ] No secrets, credentials, or sensitive data included
 - [ ] Third-party licensing reviewed when applicable

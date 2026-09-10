@@ -54,6 +54,8 @@ flowchart TD
 - **Confidence Scoring & Corroboration**: Evidence-weighted scoring (0.0–1.0) with corroboration bonuses when multiple scanners confirm a finding.
 - **Risk Gate Engine**: Automated policy decisions (`PASS`, `REVIEW`, `BLOCKED`) based on vulnerability severity and confidence thresholds.
 - **Asynchronous Architecture**: Non-blocking REST API backed by Redis and background workers.
+- **Agentic Security Engine Foundation (`AgenticSecurityAdapter`)**: Pluggable abstraction for agentic security workflows (architecture, threat modeling, safe analysis review, critic, reporting) cleanly decoupled from deterministic scanners, establishing Google Mantis integration contract foundation.
+- **Security Toolchain Inventory & Health (`secops tools`, `secops tools check`)**: Unified inspection of static engines, DAST scanners, knowledge bases (Nuclei templates, Trivy DB), and agents with local runtime inspection and graceful offline update checking.
 
 ---
 
@@ -371,6 +373,55 @@ When CodeQL is present in the worker, it is automatically executed by the CodeQL
 - **DAST mode**: ZAP runs in baseline (non-destructive) mode. Nuclei uses default safe templates. Neither performs active exploitation, brute force, or destructive fuzzing. DAST scans are currently unauthenticated unless custom scanner configuration supports authentication.
 
 - **Production caution**: While scans are non-destructive by default, exercise appropriate caution when targeting production systems.
+
+### Inspect Security Toolchain Inventory (`secops tools`)
+
+View installed, configured, and available versions for all integrated security engines, knowledge bases, and agent adapters:
+
+```bash
+# Inspect local environment and worker toolchain (offline-safe)
+secops tools
+
+# Output structured machine-readable JSON
+secops tools --json
+
+# Query upstream registries (PyPI, GitHub Releases) for update availability
+secops tools check
+
+# Output upstream check results as JSON
+secops tools check --json
+```
+
+Example tabular output:
+```
+TOOL              CATEGORY   INSTALLED  CONFIGURED                AVAILABLE  STATUS
+----------------  ---------  ---------  ------------------------  ---------  -------------
+Semgrep           ENGINE     1.70.0     unpinned                  1.176.1    UPDATE_AVAILABLE
+CodeQL            ENGINE     -          external (optional)       -          OPTIONAL
+Trivy             ENGINE     0.54.1     unpinned                  0.74.0     UPDATE_AVAILABLE
+pip-audit         ENGINE     2.7.3      unpinned                  2.10.1     UPDATE_AVAILABLE
+npm               ENGINE     10.9.8     system package            -          CURRENT
+Nuclei            ENGINE     3.3.2      3.3.2                     3.11.1     UPDATE_AVAILABLE
+ZAP               ENGINE     2.17.0     2.17.0                    2.17.0     CURRENT
+Nuclei Templates  KNOWLEDGE  10.4.8     10.4.8                    10.4.8     CURRENT
+Trivy DB          KNOWLEDGE  v2         dynamic / cached          -          CURRENT
+Mantis            AGENT      -          disabled (contract only)  d13c93fb   OPTIONAL
+```
+
+---
+
+## Active Exploitation and Production Safety
+
+SecOps Orchestrator is designed for high-assurance, safe operational use across development, CI/CD, and production boundary monitoring.
+
+### Google Mantis Integration Safety Boundary
+- **Upstream Capabilities vs SecOps Boundary**: Google Mantis upstream possesses workflows to generate and execute autonomous reproducer code and exploit chains. **SecOps Orchestrator explicitly blocks active reproduction (`reproduce`), exploit chaining (`chain`), and automated patching (`patch`).**
+- **Non-Destructive Safe Analysis**: Only safe-analysis capabilities (architecture review, threat modeling, research, code review, critic reasoning, reporting) are permitted for agentic workflows.
+- **Isolated Sandbox Requirements**: Any future execution of autonomous agents or reproducer verification must execute outside the primary orchestration worker within an isolated, disposable sandbox (non-root execution, no Docker socket mount, no production credentials, disposable workspace, CPU/RAM/PID limits, network egress disabled by default, and zero access to internal networks).
+- **Evidence Safety Invariant**: Vulnerability findings ingested from LLMs or Mantis are strictly classified as `SINGLE_SOURCE` evidence. Model assertions claiming a flaw is "verified" or "reproduced" are never promoted to `RUNTIME_VALIDATED` without independent, controlled verification.
+- **No False Sense of Immunity**: Passing a SecOps Orchestrator scan (`PASS` risk gate) indicates that no findings exceeding configured policy thresholds were identified by enabled tools. It does not certify that an application is entirely free of vulnerabilities.
+
+---
 
 ## Running Tests
 

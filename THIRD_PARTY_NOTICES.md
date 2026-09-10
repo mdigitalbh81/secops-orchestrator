@@ -62,6 +62,7 @@ All direct runtime dependencies specified in `backend/pyproject.toml` (`[project
 | Component | Role | License | Distribution Status | Upstream Source |
 | :--- | :--- | :--- | :--- | :--- |
 | **GitHub CodeQL CLI** | Deep SAST Scanner (Dataflow / Taint) | Proprietary / GitHub Terms | Optional external integration; NOT distributed or installed | https://github.com/github/codeql-cli-binaries |
+| **Google Mantis** | Agentic Security Framework / Research Skills | Apache-2.0 | Contract & ingestion abstraction only; NOT bundled or distributed | https://github.com/google/mantis |
 
 ### Special Notice: GitHub CodeQL
 
@@ -69,6 +70,11 @@ All direct runtime dependencies specified in `backend/pyproject.toml` (`[project
 - **Terms**: GitHub CodeQL CLI is proprietary software governed by GitHub's own terms ([GitHub CodeQL Terms and Conditions](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md) and [GitHub Terms of Service](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)).
 - **User Responsibility**: Users who choose to download, install, or enable CodeQL in their environment are solely responsible for obtaining any necessary license and ensuring their use strictly complies with GitHub's CodeQL Terms and Conditions. SecOps Orchestrator grants no rights, licenses, or warranties for the use of CodeQL.
 - **Availability Behavior**: SecOps Orchestrator detects whether the `codeql` binary is available in `PATH`. When absent, it records status as `UNAVAILABLE` and continues scan execution without error.
+
+### Special Notice: Google Mantis
+**Status**: Integration contract foundation and finding ingestion schema only. NOT bundled, downloaded, or distributed in SecOps Orchestrator images.
+**Upstream Revision Observed**: `d13c93fb8e9779801711daea0d65fffa133c3b2d`
+**Terms**: Google Mantis is licensed under Apache-2.0. Google Mantis is not an officially supported Google product. It is experimental and demonstration-oriented. SecOps Orchestrator does not execute active reproduction, PoCs, exploit chaining, or automated patching from Mantis.
 
 ---
 

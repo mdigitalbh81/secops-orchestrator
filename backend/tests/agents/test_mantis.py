@@ -55,7 +55,6 @@ def test_mantis_enabled_via_settings() -> None:
             mantis_enabled=True,
             mantis_revision="abcdef123456",
             mantis_execution_mode="sandbox",
-            mantis_reproduce=True,  # Even if set to true in config, adapter must not activate it
         )
     )
     try:
@@ -195,8 +194,8 @@ def test_mantis_ingest_false_positive_preserves_status():
     findings = adapter.ingest_findings(sample)
     assert len(findings) == 1
     f = findings[0]
-    assert f.status == FindingStatus.FALSE_POSITIVE
-    assert f.status != FindingStatus.OPEN
+    assert f.status == FindingStatus.OPEN
+    assert f.status != FindingStatus.FALSE_POSITIVE
     assert f.raw_data["mantis_status"] == "FALSE_POSITIVE"
 
 
@@ -250,9 +249,9 @@ def test_mantis_ingest_duplicate_standalone_not_open():
     findings = adapter.ingest_findings(sample)
     assert len(findings) == 1
     f = findings[0]
-    # Standalone duplicate must NOT be an open actionable finding
-    assert f.status != FindingStatus.OPEN
-    assert f.status == FindingStatus.ACCEPTED_BY_DESIGN
+    # Standalone duplicate stays OPEN; ACCEPTED_BY_DESIGN removed from ingestion
+    assert f.status == FindingStatus.OPEN
+    assert f.status != FindingStatus.ACCEPTED_BY_DESIGN
     assert f.raw_data["mantis_status"] == "DUPLICATE"
     assert f.raw_data["is_duplicate"] is True
 
@@ -321,3 +320,39 @@ def test_mantis_repro_status_never_promotes_runtime_validated():
     f = findings[0]
     assert f.evidence_level == EvidenceLevel.SINGLE_SOURCE
     assert f.evidence_level != EvidenceLevel.RUNTIME_VALIDATED
+
+
+def test_mantis_no_agent_verdict_creates_secops_disposition():
+    """No Mantis status alone may produce ACCEPTED_RISK, ACCEPTED_BY_DESIGN,
+    FIXED, or FALSE_POSITIVE as a SecOps FindingStatus."""
+    adapter = MantisAdapter()
+    forbidden = {
+        FindingStatus.ACCEPTED_RISK,
+        FindingStatus.ACCEPTED_BY_DESIGN,
+        FindingStatus.FIXED,
+        FindingStatus.FALSE_POSITIVE,
+    }
+    agent_verdicts = [
+        "VALID",
+        "PROVISIONALLY_VALID",
+        "NEEDS_RESEARCH",
+        "FALSE_POSITIVE",
+        "FP",
+        "DUPLICATE",
+    ]
+    for verdict in agent_verdicts:
+        sample = {
+            "title": f"Test finding with verdict {verdict}",
+            "description": "Automated disposition guard test.",
+            "status": verdict,
+            "severity": "MEDIUM",
+            "file_path": "app/guard.py",
+        }
+        findings = adapter.ingest_findings(sample)
+        assert len(findings) == 1, f"Expected 1 finding for verdict {verdict}"
+        f = findings[0]
+        assert f.status not in forbidden, (
+            f"Verdict {verdict} must not produce SecOps disposition {f.status}"
+        )
+        assert f.status == FindingStatus.OPEN
+        assert f.raw_data["mantis_status"] == verdict

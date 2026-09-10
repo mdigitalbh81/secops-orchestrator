@@ -123,7 +123,7 @@ class MantisAdapter(AgenticSecurityAdapter):
         Safety invariants:
         1. EvidenceLevel is strictly SINGLE_SOURCE (never RUNTIME_VALIDATED even if reproduced).
         2. Confidence bounded between 0.20 and 0.60 (default 0.45).
-        3. Mantis FALSE_POSITIVE maps to FindingStatus.FALSE_POSITIVE (never OPEN).
+            3. Mantis FALSE_POSITIVE preserved as provenance; SecOps finding status stays OPEN.
         4. Mantis DUPLICATE does not create a second actionable finding.
         5. Line numbers are strictly typed to int | None.
         6. Source agent provenance and mantis_status are preserved.
@@ -264,10 +264,10 @@ class MantisAdapter(AgenticSecurityAdapter):
             or "VALID"
         ).strip().upper()
 
-        if raw_status in ("FALSE_POSITIVE", "FP"):
-            finding_status = FindingStatus.FALSE_POSITIVE
-        elif raw_status == "DUPLICATE":
-            finding_status = FindingStatus.ACCEPTED_BY_DESIGN
+        # Agent verdicts are metadata/provenance only; they never create
+        # SecOps dispositions automatically.  All findings start OPEN.
+        if raw_status in ("FALSE_POSITIVE", "FP", "DUPLICATE"):
+            finding_status = FindingStatus.OPEN
         else:
             finding_status = FindingStatus.OPEN
 

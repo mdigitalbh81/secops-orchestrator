@@ -123,7 +123,7 @@ class MantisAdapter(AgenticSecurityAdapter):
         Safety invariants:
         1. EvidenceLevel is strictly SINGLE_SOURCE (never RUNTIME_VALIDATED even if reproduced).
         2. Confidence bounded between 0.20 and 0.60 (default 0.45).
-            3. Mantis FALSE_POSITIVE preserved as provenance; SecOps finding status stays OPEN.
+        3. Mantis FALSE_POSITIVE preserved as provenance; SecOps finding status stays OPEN.
         4. Mantis DUPLICATE does not create a second actionable finding.
         5. Line numbers are strictly typed to int | None.
         6. Source agent provenance and mantis_status are preserved.
@@ -131,11 +131,12 @@ class MantisAdapter(AgenticSecurityAdapter):
         items = self._extract_raw_items(raw_data)
         normalized: list[NormalizedFinding] = []
 
-        # Index IDs present in this batch to detect duplicates whose primary finding is also ingested
-        known_ids: set[str] = set()
-        for it in items:
-            if isinstance(it, dict) and it.get("id"):
-                known_ids.add(str(it["id"]).strip())
+        # Two-phase ingestion:
+        # Phase 1: normalize primary/standalone findings first, tracking valid primaries by ID.
+        # Phase 2: resolve duplicates against validated primaries; duplicates without a valid
+        # primary remain OPEN findings (order-independent, safe fallback).
+        primary_by_id: dict[str, NormalizedFinding] = {}
+        duplicate_candidates: list[dict] = []
 
         for item in items:
             if not isinstance(item, dict):
@@ -148,32 +149,39 @@ class MantisAdapter(AgenticSecurityAdapter):
                 or ""
             ).strip().upper()
 
-            # If marked DUPLICATE and primary finding is guaranteed in this batch:
             dup_of = str(item.get("duplicate_of") or "").strip()
-            if raw_status == "DUPLICATE" and dup_of and dup_of in known_ids:
-                for existing in normalized:
-                    ex_id = (
-                        str(existing.raw_data.get("raw_finding", {}).get("id", "")).strip()
-                        if existing.raw_data
-                        else ""
-                    )
-                    if ex_id == dup_of:
-                        dup_record = {
-                            "source_agent": self.name,
-                            "mantis_status": "DUPLICATE",
-                            "duplicate_of": dup_of,
-                            "raw_finding": item,
-                        }
-                        existing.evidences.append(dup_record)
-                        if "duplicates" not in existing.raw_data:
-                            existing.raw_data["duplicates"] = []
-                        existing.raw_data["duplicates"].append(item)
-                        break
+            if raw_status == "DUPLICATE" and dup_of:
+                duplicate_candidates.append(item)
                 continue
 
             finding = self._normalize_single_item(item)
             if finding is not None:
                 normalized.append(finding)
+                item_id = str(item.get("id") or "").strip()
+                if item_id and item_id not in primary_by_id:
+                    primary_by_id[item_id] = finding
+
+        for item in duplicate_candidates:
+            dup_of = str(item.get("duplicate_of") or "").strip()
+            primary = primary_by_id.get(dup_of)
+            if primary is not None:
+                dup_record = {
+                    "source_agent": self.name,
+                    "mantis_status": "DUPLICATE",
+                    "duplicate_of": dup_of,
+                    "raw_finding": item,
+                }
+                primary.evidences.append(dup_record)
+                if "duplicates" not in primary.raw_data:
+                    primary.raw_data["duplicates"] = []
+                primary.raw_data["duplicates"].append(item)
+            else:
+                finding = self._normalize_single_item(item)
+                if finding is not None:
+                    normalized.append(finding)
+                    item_id = str(item.get("id") or "").strip()
+                    if item_id and item_id not in primary_by_id:
+                        primary_by_id[item_id] = finding
 
         return normalized
 
@@ -266,10 +274,7 @@ class MantisAdapter(AgenticSecurityAdapter):
 
         # Agent verdicts are metadata/provenance only; they never create
         # SecOps dispositions automatically.  All findings start OPEN.
-        if raw_status in ("FALSE_POSITIVE", "FP", "DUPLICATE"):
-            finding_status = FindingStatus.OPEN
-        else:
-            finding_status = FindingStatus.OPEN
+        finding_status = FindingStatus.OPEN
 
         # Invariant: safe-analysis findings are NEVER RUNTIME_VALIDATED in this PR
         # Even if repro_status == "reproduced" or "verified"

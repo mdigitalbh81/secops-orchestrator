@@ -349,10 +349,133 @@ def test_mantis_no_agent_verdict_creates_secops_disposition():
             "file_path": "app/guard.py",
         }
         findings = adapter.ingest_findings(sample)
-        assert len(findings) == 1, f"Expected 1 finding for verdict {verdict}"
-        f = findings[0]
-        assert f.status not in forbidden, (
-            f"Verdict {verdict} must not produce SecOps disposition {f.status}"
-        )
-        assert f.status == FindingStatus.OPEN
-        assert f.raw_data["mantis_status"] == verdict
+    assert len(findings) == 1, f"Expected 1 finding for verdict {verdict}"
+    f = findings[0]
+    assert f.status not in forbidden, (
+        f"Verdict {verdict} must not produce SecOps disposition {f.status}"
+    )
+    assert f.status == FindingStatus.OPEN
+    assert f.raw_data["mantis_status"] == verdict
+
+
+def test_mantis_ingest_duplicate_before_primary_order_independent() -> None:
+    """Duplicate appearing before its primary in the batch attaches to the primary identically."""
+    adapter = MantisAdapter()
+    payload = {
+        "findings": [
+            {
+                "id": "mantis-vuln-02",
+                "title": "SQL Injection in UserService (Duplicate)",
+                "description": "Duplicate finding from secondary query.",
+                "status": "DUPLICATE",
+                "duplicate_of": "mantis-vuln-01",
+                "severity": "HIGH",
+                "file_path": "app/users.py",
+                "line_start": 20,
+            },
+            {
+                "id": "mantis-vuln-01",
+                "title": "SQL Injection in User Service",
+                "description": "User input concatenated directly.",
+                "status": "VALID",
+                "severity": "HIGH",
+                "file_path": "app/users.py",
+                "line_start": 20,
+            },
+        ]
+    }
+    findings = adapter.ingest_findings(payload)
+    # Order-independent: duplicate attaches to primary, only 1 actionable finding
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.status == FindingStatus.OPEN
+    assert f.title == "SQL Injection in User Service"
+    assert len(f.evidences) == 2
+    assert "duplicates" in f.raw_data
+    assert len(f.raw_data["duplicates"]) == 1
+    assert f.raw_data["duplicates"][0]["id"] == "mantis-vuln-02"
+
+
+def test_mantis_ingest_duplicate_when_primary_invalid_fails_safe() -> None:
+    """When a primary in the batch is invalid/fails normalization, duplicate remains OPEN."""
+    adapter = MantisAdapter()
+    # Test duplicate after invalid primary
+    payload_after = {
+        "findings": [
+            {
+                "id": "mantis-vuln-invalid",
+                # missing title -> fails normalization
+                "description": "Malformed finding without title.",
+                "status": "VALID",
+            },
+            {
+                "id": "mantis-vuln-dup",
+                "title": "Duplicate Finding Safe Fallback",
+                "description": "Points to an invalid primary in the same batch.",
+                "status": "DUPLICATE",
+                "duplicate_of": "mantis-vuln-invalid",
+                "severity": "HIGH",
+                "file_path": "app/users.py",
+                "line_start": 20,
+            },
+        ]
+    }
+    findings_after = adapter.ingest_findings(payload_after)
+    assert len(findings_after) == 1
+    f_after = findings_after[0]
+    assert f_after.status == FindingStatus.OPEN
+    assert f_after.title == "Duplicate Finding Safe Fallback"
+    assert f_after.raw_data["mantis_status"] == "DUPLICATE"
+    assert f_after.raw_data["is_duplicate"] is True
+    assert f_after.raw_data["duplicate_of"] == "mantis-vuln-invalid"
+
+    # Test duplicate before invalid primary
+    payload_before = {
+        "findings": [
+            {
+                "id": "mantis-vuln-dup-2",
+                "title": "Duplicate Finding Safe Fallback Reversed",
+                "description": "Points to an invalid primary in the same batch (reversed order).",
+                "status": "DUPLICATE",
+                "duplicate_of": "mantis-vuln-invalid",
+                "severity": "HIGH",
+                "file_path": "app/users.py",
+                "line_start": 20,
+            },
+            {
+                "id": "mantis-vuln-invalid",
+                "description": "Malformed finding without title.",
+                "status": "VALID",
+            },
+        ]
+    }
+    findings_before = adapter.ingest_findings(payload_before)
+    assert len(findings_before) == 1
+    f_before = findings_before[0]
+    assert f_before.status == FindingStatus.OPEN
+    assert f_before.title == "Duplicate Finding Safe Fallback Reversed"
+    assert f_before.raw_data["mantis_status"] == "DUPLICATE"
+    assert f_before.raw_data["is_duplicate"] is True
+    assert f_before.raw_data["duplicate_of"] == "mantis-vuln-invalid"
+
+
+def test_mantis_ingest_duplicate_standalone_with_missing_primary_stays_open() -> None:
+    """Standalone duplicate pointing to non-existent primary ID remains OPEN with metadata."""
+    adapter = MantisAdapter()
+    sample = {
+        "id": "mantis-dup-missing-parent",
+        "title": "Unlinked Duplicate Issue",
+        "description": "Mantis flagged duplicate pointing to non-existent parent.",
+        "status": "DUPLICATE",
+        "duplicate_of": "never-existed-id",
+        "severity": "MEDIUM",
+        "file_path": "app/auth.py",
+    }
+    findings = adapter.ingest_findings(sample)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.status == FindingStatus.OPEN
+    assert f.status != FindingStatus.ACCEPTED_BY_DESIGN
+    assert f.raw_data["mantis_status"] == "DUPLICATE"
+    assert f.raw_data["is_duplicate"] is True
+    assert f.raw_data["duplicate_of"] == "never-existed-id"

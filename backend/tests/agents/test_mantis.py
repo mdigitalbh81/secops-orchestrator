@@ -349,13 +349,13 @@ def test_mantis_no_agent_verdict_creates_secops_disposition():
             "file_path": "app/guard.py",
         }
         findings = adapter.ingest_findings(sample)
-    assert len(findings) == 1, f"Expected 1 finding for verdict {verdict}"
-    f = findings[0]
-    assert f.status not in forbidden, (
-        f"Verdict {verdict} must not produce SecOps disposition {f.status}"
-    )
-    assert f.status == FindingStatus.OPEN
-    assert f.raw_data["mantis_status"] == verdict
+        assert len(findings) == 1, f"Expected 1 finding for verdict {verdict}"
+        f = findings[0]
+        assert f.status not in forbidden, (
+            f"Verdict {verdict} must not produce SecOps disposition {f.status}"
+        )
+        assert f.status == FindingStatus.OPEN
+        assert f.raw_data["mantis_status"] == verdict
 
 
 def test_mantis_ingest_duplicate_before_primary_order_independent() -> None:

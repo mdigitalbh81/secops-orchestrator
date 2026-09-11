@@ -38,7 +38,7 @@ These names are recommended conventions to help organize work, not rigid policie
 
 ## Testing and Validation
 
-Pull Requests trigger automated validation gates via GitHub Actions. When branch protection is active, all checks aggregated by `CI / Gate` must pass before merge (branch protection rulesets are configured separately). Contributors must run these same validation commands locally before opening or updating a pull request.
+Pull Requests trigger automated validation gates via GitHub Actions. When branch protection is active, all checks aggregated by `Gate` must pass before merge (branch protection rulesets are configured separately). Contributors must run these same validation commands locally before opening or updating a pull request.
 
 Run standard validation commands using the project's canonical configuration:
 

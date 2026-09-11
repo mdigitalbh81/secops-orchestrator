@@ -450,7 +450,7 @@ Pull Requests and pushes to `main` trigger automated quality validation via GitH
   - Base Docker Compose configuration verification (`docker compose config`)
   - CodeQL overlay structural validation only (`docker compose -f docker-compose.yml -f docker-compose.codeql.yml config`)
 - **Gate**:
-  - Stable aggregate gate (`CI / Gate`) that succeeds only when all required validation jobs pass.
+  - Stable aggregate gate (`Gate`) that succeeds only when all required validation jobs pass.
 
 **Operational Safety Invariants**:
 - The CI gate does not execute DAST.

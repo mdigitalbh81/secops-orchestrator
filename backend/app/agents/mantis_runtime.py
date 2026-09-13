@@ -27,6 +27,9 @@ from app.security.runner import RunnerConfig, redact_secrets, run_command_sync
 
 logger = logging.getLogger(__name__)
 
+# Regex for full 40-character hex Git SHA-1
+_FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
 # Mapping of safe capabilities to upstream relative skill paths at pinned revision
 SAFE_SKILLS: dict[AgentCapability, str] = {
     AgentCapability.ARCHITECTURE: "mantis-architecture/SKILL.md",
@@ -305,9 +308,13 @@ class MantisSafeRuntime:
     def validate_mantis_root(
         self,
         mantis_root: Path | None,
-        expected_revision: str,
+        expected_revision: str | None,
     ) -> tuple[Path, str]:
-        """Validate Mantis root path and exact pinned git revision using central runner."""
+        """Validate Mantis root path and exact pinned git revision using central runner.
+
+        The expected_revision MUST be a full 40-char hex SHA-1.  Branch names,
+        tags, abbreviated SHAs and arbitrary git revspec strings are rejected.
+        """
         if not mantis_root:
             raise MantisValidationError("Mantis root directory is not configured (SECOPS_MANTIS_ROOT)")
 
@@ -315,6 +322,11 @@ class MantisSafeRuntime:
         if not resolved_root.is_dir():
             raise MantisValidationError(
                 f"Mantis root does not exist or is not a directory: {resolved_root}"
+            )
+
+        if not expected_revision or not _FULL_SHA_RE.match(expected_revision):
+            raise MantisValidationError(
+                f"Mantis revision must be a full 40-char hex SHA (got '{expected_revision}')"
             )
 
         config = RunnerConfig(timeout=10, allowed_roots=[resolved_root])
@@ -351,27 +363,83 @@ class MantisSafeRuntime:
         resolved_mantis: Path,
         capability: AgentCapability,
         max_skill_bytes: int,
+        expected_revision: str | None = None,
     ) -> tuple[str, str]:
-        """Load skill file from verified Mantis root, checking traversal and size limits."""
+        """Load skill content from pinned Git object after integrity checks.
+
+        Validates that the working-tree skill has not diverged from the pinned
+        revision, rejects symlinks in the Git tree, checks blob size, and reads
+        the canonical content from the Git object store.
+        """
         rel_path = SAFE_SKILLS[capability]
-        skill_path = (resolved_mantis / rel_path).resolve()
+
+        revision = expected_revision
+        if not revision or not _FULL_SHA_RE.match(revision):
+            raise MantisValidationError(
+                f"Cannot load skill without a valid pinned revision (got '{revision}')"
+            )
+
+        config = RunnerConfig(timeout=10, allowed_roots=[resolved_mantis])
+
+        # Reject symlinks in pinned tree (mode 120000)
+        ls_res = run_command_sync(
+            ["git", "ls-tree", revision, rel_path],
+            cwd=resolved_mantis,
+            config=config,
+        )
+        if ls_res.return_code != 0 or not ls_res.stdout.strip():
+            raise MantisValidationError(f"Safe skill file not found at pinned revision: {rel_path}")
+
+        ls_fields = ls_res.stdout.strip().split()
+        if len(ls_fields) >= 1 and ls_fields[0] == "120000":
+            raise MantisValidationError(
+                f"Safe Mantis skill is a symlink in pinned revision: {rel_path}"
+            )
+
+        # Check blob size before loading
+        size_res = run_command_sync(
+            ["git", "cat-file", "-s", f"{revision}:{rel_path}"],
+            cwd=resolved_mantis,
+            config=config,
+        )
+        if size_res.return_code != 0:
+            raise MantisValidationError(f"Failed to inspect skill blob size: {rel_path}")
+
         try:
-            skill_path.relative_to(resolved_mantis)
+            blob_size = int(size_res.stdout.strip())
         except ValueError:
-            raise MantisValidationError(f"Skill path escapes Mantis root: {rel_path}") from None
+            raise MantisValidationError(f"Malformed skill blob size output: {rel_path}") from None
 
-        if not skill_path.is_file():
-            raise MantisValidationError(f"Safe skill file not found: {rel_path}")
-
-        if skill_path.stat().st_size > max_skill_bytes:
+        if blob_size > max_skill_bytes:
             raise MantisValidationError(
                 f"Skill file {rel_path} exceeds maximum allowed size ({max_skill_bytes} bytes)"
             )
 
-        try:
-            content = skill_path.read_text(encoding="utf-8", errors="replace")
-        except Exception as exc:
-            raise MantisValidationError(f"Failed to read skill file {rel_path}: {exc}") from exc
+        # Verify working-tree skill has NOT diverged from pinned commit
+        diff_res = run_command_sync(
+            ["git", "diff", "--quiet", revision, "--", rel_path],
+            cwd=resolved_mantis,
+            config=config,
+        )
+        if diff_res.return_code == 1:
+            raise MantisValidationError(
+                f"Safe Mantis skill differs from pinned revision: {rel_path}"
+            )
+        if diff_res.return_code not in (0, 1):
+            raise MantisValidationError(
+                f"Failed to verify skill integrity against pinned revision: {rel_path}"
+            )
+
+        # Load canonical content from Git object store
+        show_res = run_command_sync(
+            ["git", "show", f"{revision}:{rel_path}"],
+            cwd=resolved_mantis,
+            config=config,
+        )
+        if show_res.return_code != 0:
+            raise MantisValidationError(f"Failed to read skill from pinned revision: {rel_path}")
+
+        content = show_res.stdout
         return content, rel_path
 
     def check_availability(self, settings: Settings | None = None) -> tuple[bool, str]:
@@ -385,6 +453,13 @@ class MantisSafeRuntime:
             return False, (
                 f"Unsupported Mantis execution mode: '{mode_str}'. "
                 f"Supported modes: read_only, dry_run"
+            )
+
+        # Revision must be full SHA
+        if cfg.mantis_revision and not _FULL_SHA_RE.match(cfg.mantis_revision):
+            return False, (
+                f"Mantis revision is not a full 40-char SHA: '{cfg.mantis_revision}'. "
+                f"Set SECOPS_MANTIS_REVISION to a full commit hash."
             )
 
         if not cfg.mantis_root:
@@ -408,14 +483,41 @@ class MantisSafeRuntime:
         except Exception as exc:
             return False, f"Git revision check failed: {exc}"
 
+        # Validate each safe skill against pinned revision
         for rel_path in SAFE_SKILLS.values():
-            skill_file = (resolved_root / rel_path).resolve()
-            try:
-                skill_file.relative_to(resolved_root)
-            except ValueError:
-                return False, f"Skill escapes Mantis root: {rel_path}"
-            if not skill_file.is_file():
-                return False, f"Missing safe skill file: {rel_path}"
+            config = RunnerConfig(timeout=10, allowed_roots=[resolved_root])
+
+            # Check existence and reject symlinks
+            ls_res = run_command_sync(
+                ["git", "ls-tree", cfg.mantis_revision, rel_path],
+                cwd=resolved_root,
+                config=config,
+            )
+            if ls_res.return_code != 0 or not ls_res.stdout.strip():
+                return False, f"Missing safe skill file at pinned revision: {rel_path}"
+            ls_fields = ls_res.stdout.strip().split()
+            if len(ls_fields) >= 1 and ls_fields[0] == "120000":
+                return False, f"Safe Mantis skill is a symlink in pinned revision: {rel_path}"
+
+            # Check blob size
+            size_res = run_command_sync(
+                ["git", "cat-file", "-s", f"{cfg.mantis_revision}:{rel_path}"],
+                cwd=resolved_root,
+                config=config,
+            )
+            if size_res.return_code != 0:
+                return False, f"Failed to inspect skill blob size: {rel_path}"
+
+            # Check working-tree divergence
+            diff_res = run_command_sync(
+                ["git", "diff", "--quiet", cfg.mantis_revision, "--", rel_path],
+                cwd=resolved_root,
+                config=config,
+            )
+            if diff_res.return_code == 1:
+                return False, f"Safe Mantis skill differs from pinned revision: {rel_path}"
+            if diff_res.return_code not in (0, 1):
+                return False, f"Failed to verify skill integrity: {rel_path}"
 
         if mode_str == "read_only" and not (cfg.mantis_base_url or cfg.mantis_api_key):
             return False, (
@@ -455,6 +557,7 @@ class MantisSafeRuntime:
         system_prompt: str,
         user_prompt: str,
         settings: Settings,
+        requested_capability: AgentCapability | None = None,
     ) -> MantisSafeAnalysisResponse:
         """Invoke OpenAI-compatible chat completions endpoint securely."""
         base_url = (settings.mantis_base_url or "https://api.openai.com/v1").rstrip("/")
@@ -473,26 +576,39 @@ class MantisSafeRuntime:
             "response_format": {"type": "json_object"},
         }
 
+        # Bounded streaming: read response body in chunks, stop if limit exceeded
+        max_bytes = settings.mantis_max_response_bytes
         try:
-            async with httpx.AsyncClient(timeout=settings.mantis_timeout_seconds) as client:
-                response = await client.post(endpoint, json=payload, headers=headers)
+            async with (
+                httpx.AsyncClient(timeout=settings.mantis_timeout_seconds) as client,
+                client.stream("POST", endpoint, json=payload, headers=headers) as response,
+            ):
+                    if response.status_code != 200:
+                        raise MantisProviderError(
+                            f"Mantis provider HTTP request failed with status {response.status_code}"
+                        )
+                    chunks: list[bytes] = []
+                    received = 0
+                    async for chunk in response.aiter_bytes():
+                        received += len(chunk)
+                        if received > max_bytes:
+                            raise MantisProviderError(
+                                "Mantis provider response exceeded maximum allowed bytes"
+                            )
+                        chunks.append(chunk)
+                    body = b"".join(chunks)
         except httpx.TimeoutException:
             raise MantisProviderError("Mantis provider request timed out") from None
+        except MantisProviderError:
+            raise
         except Exception as exc:
             raise MantisProviderError(
                 f"Mantis provider connection error: {exc.__class__.__name__}"
             ) from None
 
-        if response.status_code != 200:
-            raise MantisProviderError(
-                f"Mantis provider HTTP request failed with status {response.status_code}"
-            )
-
-        if len(response.content) > settings.mantis_max_response_bytes:
-            raise MantisProviderError("Mantis provider response exceeded maximum allowed bytes")
-
         try:
-            data = response.json()
+            import json as _json
+            data = _json.loads(body)
         except Exception as exc:
             raise MantisProviderError(f"Failed to decode provider JSON: {exc.__class__.__name__}") from None
 
@@ -500,11 +616,22 @@ class MantisSafeRuntime:
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
 
         try:
-            return MantisSafeAnalysisResponse.model_validate_json(cleaned)
+            response_obj = MantisSafeAnalysisResponse.model_validate_json(cleaned)
         except Exception as exc:
             raise MantisProviderError(
                 f"Invalid structured response schema: {exc.__class__.__name__}"
             ) from None
+
+        # Validate response capability matches request
+        if requested_capability is not None:
+            resp_cap = response_obj.capability.strip().lower()
+            if resp_cap != requested_capability.value:
+                raise MantisProviderError(
+                    f"Response capability mismatch: requested '{requested_capability.value}', "
+                    f"got '{resp_cap}'"
+                )
+
+        return response_obj
 
     async def analyze(
         self,
@@ -556,7 +683,8 @@ class MantisSafeRuntime:
 
         # 6. Load safe skill instructions
         skill_content, skill_rel_path = self.load_skill(
-            resolved_mantis, cap_enum, cfg.mantis_max_skill_bytes
+            resolved_mantis, cap_enum, cfg.mantis_max_skill_bytes,
+            expected_revision=detected_rev,
         )
 
         # 7. Collect source payload strictly read-only
@@ -591,7 +719,9 @@ class MantisSafeRuntime:
         system_prompt, user_prompt = self.build_prompts(
             cap_enum, skill_content, objective, source_payload
         )
-        response = await self._call_provider(system_prompt, user_prompt, cfg)
+        response = await self._call_provider(
+            system_prompt, user_prompt, cfg, requested_capability=cap_enum,
+        )
 
         raw_findings = [f.model_dump() for f in response.findings]
         normalized_findings = self.adapter.ingest_findings(raw_findings)

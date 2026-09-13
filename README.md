@@ -328,6 +328,13 @@ secops findings --severity medium
 # Filter findings by scanner
 secops findings --scanner zap
 secops findings --scanner nuclei
+
+# Check Google Mantis runtime status
+secops mantis status
+secops mantis status --json
+
+# Run safe-analysis dry-run
+secops mantis analyze ~/projetos/meu-app --capability review --dry-run
 ```
 
 ### GitHub CodeQL (Optional)
@@ -415,6 +422,7 @@ Mantis            AGENT      -          disabled (contract only)  d13c93fb   OPT
 SecOps Orchestrator is designed for high-assurance, safe operational use across development, CI/CD, and production boundary monitoring.
 
 ### Google Mantis Integration Safety Boundary
+- **External Pinned Checkout**: Google Mantis is NOT bundled, downloaded, or automatically installed by SecOps Orchestrator. Users provide an external checkout via `SECOPS_MANTIS_ROOT` pinned to exact revision `SECOPS_MANTIS_REVISION` (`d13c93fb8e9779801711daea0d65fffa133c3b2d`). Upstream Mantis is experimental and demonstration-oriented; Google Mantis is not an officially supported Google product, and Google does not sponsor, endorse, or support SecOps Orchestrator.
 - **Upstream Capabilities vs SecOps Boundary**: Google Mantis upstream possesses workflows to generate and execute autonomous reproducer code and exploit chains. **SecOps Orchestrator explicitly blocks active reproduction (`reproduce`), exploit chaining (`chain`), and automated patching (`patch`).**
 - **Non-Destructive Safe Analysis**: Only safe-analysis capabilities (architecture review, threat modeling, research, code review, critic reasoning, reporting) are permitted for agentic workflows.
 - **Isolated Sandbox Requirements**: Any future execution of autonomous agents or reproducer verification must execute outside the primary orchestration worker within an isolated, disposable sandbox (non-root execution, no Docker socket mount, no production credentials, disposable workspace, CPU/RAM/PID limits, network egress disabled by default, and zero access to internal networks).

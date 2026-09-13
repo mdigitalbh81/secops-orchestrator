@@ -53,6 +53,7 @@ class AgentExecutionMode(enum.StrEnum):
     SANDBOX = "sandbox"
     LOCAL = "local"
     DRY_RUN = "dry_run"
+    READ_ONLY = "read_only"
 
 
 class AgenticSecurityAdapter(ABC):

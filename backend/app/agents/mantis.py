@@ -106,8 +106,19 @@ class MantisAdapter(AgenticSecurityAdapter):
             return AgentExecutionMode.DISABLED
 
     async def is_available(self) -> bool:
-        """Mantis CLI / execution runtime is not bundled or auto-installed."""
-        return False
+        """Check if Mantis safe runtime is configured and accessible."""
+        from app.agents.mantis_runtime import MantisSafeRuntime
+
+        runtime = MantisSafeRuntime(adapter=self)
+        available, _ = runtime.check_availability()
+        return available
+
+    def check_availability(self) -> tuple[bool, str]:
+        """Inspect runtime availability without performing network calls."""
+        from app.agents.mantis_runtime import MantisSafeRuntime
+
+        runtime = MantisSafeRuntime(adapter=self)
+        return runtime.check_availability()
 
     def is_enabled(self) -> bool:
         """Disabled by default; requires explicit SECOPS_MANTIS_ENABLED=true."""

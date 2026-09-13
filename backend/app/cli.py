@@ -1537,7 +1537,180 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
+    # mantis
+    mantis_p = subparsers.add_parser("mantis", help="Google Mantis safe-analysis agent operations")
+    mantis_sub = mantis_p.add_subparsers(dest="mantis_action", metavar="<action>")
+
+    mantis_status_p = mantis_sub.add_parser("status", help="Inspect Mantis runtime status and configuration")
+    mantis_status_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
+    mantis_analyze_p = mantis_sub.add_parser("analyze", help="Execute safe-analysis capability against local repository")
+    mantis_analyze_p.add_argument("path", help="Path to local target repository")
+    mantis_analyze_p.add_argument(
+        "--capability",
+        required=True,
+        help="Safe capability (architecture, threat_model, plan, research, review, critic, report)",
+    )
+    mantis_analyze_p.add_argument("--objective", help="Optional specific objective or question for the analysis")
+    mantis_analyze_p.add_argument("--dry-run", action="store_true", help="Validate setup and collect metadata without calling provider")
+    mantis_analyze_p.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+
     return parser
+
+
+def cmd_mantis_status(args: argparse.Namespace) -> int:
+    """Inspect Mantis runtime status and configuration."""
+    from app.agents.mantis_runtime import SAFE_SKILLS, MantisSafeRuntime
+    from app.core.config import get_settings
+    from app.security.runner import RunnerConfig, run_command_sync
+
+    settings = get_settings()
+    runtime = MantisSafeRuntime()
+    available, reason = runtime.check_availability(settings)
+
+    detected_revision = None
+    if settings.mantis_root and settings.mantis_root.is_dir():
+        with contextlib.suppress(Exception):
+            resolved_root = settings.mantis_root.resolve()
+            config = RunnerConfig(timeout=10, allowed_roots=[resolved_root])
+            res = run_command_sync(["git", "rev-parse", "HEAD"], cwd=resolved_root, config=config)
+            if res.return_code == 0:
+                detected_revision = res.stdout.strip()
+
+    provider_configured = bool(settings.mantis_base_url or settings.mantis_api_key)
+    safe_caps = [c.value for c in SAFE_SKILLS]
+    blocked_caps = ["reproduce", "chain", "patch"]
+
+    if getattr(args, "json", False):
+        output = {
+            "enabled": settings.mantis_enabled,
+            "execution_mode": settings.mantis_execution_mode,
+            "configured_revision": settings.mantis_revision,
+            "detected_revision": detected_revision,
+            "mantis_root": str(settings.mantis_root) if settings.mantis_root else None,
+            "provider_configured": provider_configured,
+            "safe_capabilities": safe_caps,
+            "blocked_capabilities": blocked_caps,
+            "available": available,
+            "bundled": False,
+        }
+        print(json.dumps(output, indent=2))
+        return 0
+
+    print("Google Mantis Safe Analysis Runtime")
+    print(f"  Enabled:              {'true' if settings.mantis_enabled else 'false'}")
+    print(f"  Execution Mode:       {settings.mantis_execution_mode}")
+    print(f"  Available:            {'true' if available else 'false'}")
+    print("  Bundled:              false")
+    print(f"  Mantis Root:          {settings.mantis_root or 'not configured'}")
+    print(f"  Configured Revision:  {settings.mantis_revision}")
+    print(f"  Detected Revision:    {detected_revision or 'none'}")
+    print(f"  Provider Configured:  {'yes' if provider_configured else 'no'}")
+    print(f"  Safe Capabilities:    {', '.join(safe_caps)}")
+    print(f"  Blocked Capabilities: {', '.join(blocked_caps)}")
+    if not available:
+        print(f"  Status Detail:        {reason}")
+    return 0
+
+
+def cmd_mantis_analyze(args: argparse.Namespace) -> int:
+    """Execute safe analysis capability against local repository."""
+    import asyncio
+
+    from app.agents.mantis_runtime import (
+        MantisBlockedCapabilityError,
+        MantisRuntimeError,
+        MantisSafeRuntime,
+    )
+
+    target_path = Path(args.path)
+    capability = args.capability
+
+    runtime = MantisSafeRuntime()
+
+    try:
+        cap_enum = runtime.validate_capability(capability)
+    except MantisBlockedCapabilityError:
+        sys.stderr.write(f"Error: Capability '{capability}' is blocked by SecOps safe-analysis policy.\n")
+        return 1
+    except MantisRuntimeError as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        return 1
+
+    try:
+        result = asyncio.run(
+            runtime.analyze(
+                target_path=target_path,
+                capability=cap_enum,
+                objective=getattr(args, "objective", None),
+                dry_run=bool(getattr(args, "dry_run", False)),
+            )
+        )
+    except MantisBlockedCapabilityError:
+        sys.stderr.write(f"Error: Capability '{capability}' is blocked by SecOps safe-analysis policy.\n")
+        return 1
+    except MantisRuntimeError as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        return 1
+    except Exception as exc:
+        sys.stderr.write(f"Error executing Mantis safe analysis: {exc}\n")
+        return 1
+
+    is_json = getattr(args, "json", False)
+
+    if getattr(args, "dry_run", False):
+        if is_json:
+            print(json.dumps(result.metadata, indent=2))
+        else:
+            print("Mantis Safe Analysis Dry Run")
+            print(f"  Capability:       {result.metadata.get('capability')}")
+            print(f"  Target:           {result.metadata.get('target')}")
+            print(f"  Mantis Revision:  {result.metadata.get('mantis_revision')}")
+            print(f"  Skill Selected:   {result.metadata.get('skill_selected')}")
+            print(f"  Source Files:     {result.metadata.get('source_file_count')}")
+            print(f"  Source Bytes:     {result.metadata.get('source_bytes')}")
+            print(f"  Provider Call:    {result.metadata.get('provider_call')}")
+        return 0
+
+    if is_json:
+        findings_json = [f.to_dict() for f in result.normalized_findings]
+        output = {
+            "capability": result.capability.value,
+            "summary": result.summary,
+            "analysis": result.analysis,
+            "findings": findings_json,
+            "metadata": result.metadata,
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        print(f"Mantis Safe Analysis ({result.capability.value})")
+        if result.summary:
+            print(f"\nSummary:\n{result.summary}")
+        if result.analysis:
+            print(f"\nAnalysis:\n{result.analysis}")
+        print(f"\nFindings ({len(result.normalized_findings)}):")
+        for f in result.normalized_findings:
+            loc = f"{f.file_path}:{f.line_start}" if f.file_path and f.line_start else (f.file_path or "project")
+            print(f"  [{f.severity.value.upper()}] {loc} - {f.title} ({f.status.value}, {f.evidence_level.value})")
+    return 0
+
+
+def cmd_mantis(args: argparse.Namespace, _api: ApiClient) -> int:
+    """Dispatcher for Mantis CLI subcommands."""
+    action = getattr(args, "mantis_action", None)
+    if action == "status":
+        return cmd_mantis_status(args)
+    elif action == "analyze":
+        return cmd_mantis_analyze(args)
+    else:
+        parser = build_parser()
+        for action_group in parser._subparsers._actions:
+            choices = getattr(action_group, "choices", None)
+            if choices and "mantis" in choices:
+                action_group.choices["mantis"].print_help()
+                return 0
+        parser.print_help()
+        return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1566,6 +1739,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_codeql(args, api)
         elif args.command == "tools":
             return cmd_tools(args, api)
+        elif args.command == "mantis":
+            return cmd_mantis(args, api)
         else:
             parser.print_help()
             return 0

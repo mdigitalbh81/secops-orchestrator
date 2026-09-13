@@ -54,7 +54,7 @@ flowchart TD
 - **Confidence Scoring & Corroboration**: Evidence-weighted scoring (0.0–1.0) with corroboration bonuses when multiple scanners confirm a finding.
 - **Risk Gate Engine**: Automated policy decisions (`PASS`, `REVIEW`, `BLOCKED`) based on vulnerability severity and confidence thresholds.
 - **Asynchronous Architecture**: Non-blocking REST API backed by Redis and background workers.
-- **Agentic Security Engine Foundation (`AgenticSecurityAdapter`)**: Pluggable abstraction for agentic security workflows (architecture, threat modeling, safe analysis review, critic, reporting) cleanly decoupled from deterministic scanners, establishing Google Mantis integration contract foundation.
+- **Agentic Security Engine Foundation (`AgenticSecurityAdapter`)**: Pluggable abstraction for agentic security workflows (architecture, threat modeling, safe analysis review, critic, reporting) cleanly decoupled from deterministic scanners, establishing Google Mantis safe-analysis runtime integration.
 - **Security Toolchain Inventory & Health (`secops tools`, `secops tools check`)**: Unified inspection of static engines, DAST scanners, knowledge bases (Nuclei templates, Trivy DB), and agents with local runtime inspection and graceful offline update checking.
 
 ---
@@ -328,6 +328,13 @@ secops findings --severity medium
 # Filter findings by scanner
 secops findings --scanner zap
 secops findings --scanner nuclei
+
+# Check Google Mantis runtime status
+secops mantis status
+secops mantis status --json
+
+# Run safe-analysis dry-run
+secops mantis analyze ~/projetos/meu-app --capability review --dry-run
 ```
 
 ### GitHub CodeQL (Optional)
@@ -405,7 +412,7 @@ Nuclei            ENGINE     3.3.2      3.3.2                     3.11.1     UPD
 ZAP               ENGINE     2.17.0     2.17.0                    2.17.0     CURRENT
 Nuclei Templates  KNOWLEDGE  10.4.8     10.4.8                    10.4.8     CURRENT
 Trivy DB          KNOWLEDGE  v2         dynamic / cached          -          CURRENT
-Mantis            AGENT      -          disabled (contract only)  d13c93fb   OPTIONAL
+Mantis            AGENT      -          external safe-analysis    d13c93fb   OPTIONAL
 ```
 
 ---
@@ -415,6 +422,7 @@ Mantis            AGENT      -          disabled (contract only)  d13c93fb   OPT
 SecOps Orchestrator is designed for high-assurance, safe operational use across development, CI/CD, and production boundary monitoring.
 
 ### Google Mantis Integration Safety Boundary
+- **External Pinned Checkout**: Google Mantis is NOT bundled, downloaded, or automatically installed by SecOps Orchestrator. Users provide an external checkout via `SECOPS_MANTIS_ROOT` pinned to exact revision `SECOPS_MANTIS_REVISION` (`d13c93fb8e9779801711daea0d65fffa133c3b2d`). Upstream Mantis is experimental and demonstration-oriented; Google Mantis is not an officially supported Google product, and Google does not sponsor, endorse, or support SecOps Orchestrator.
 - **Upstream Capabilities vs SecOps Boundary**: Google Mantis upstream possesses workflows to generate and execute autonomous reproducer code and exploit chains. **SecOps Orchestrator explicitly blocks active reproduction (`reproduce`), exploit chaining (`chain`), and automated patching (`patch`).**
 - **Non-Destructive Safe Analysis**: Only safe-analysis capabilities (architecture review, threat modeling, research, code review, critic reasoning, reporting) are permitted for agentic workflows.
 - **Isolated Sandbox Requirements**: Any future execution of autonomous agents or reproducer verification must execute outside the primary orchestration worker within an isolated, disposable sandbox (non-root execution, no Docker socket mount, no production credentials, disposable workspace, CPU/RAM/PID limits, network egress disabled by default, and zero access to internal networks).

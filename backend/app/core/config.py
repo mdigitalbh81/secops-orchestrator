@@ -87,6 +87,42 @@ class Settings(BaseSettings):
     mantis_execution_mode: str = Field(
         default="disabled", validation_alias="SECOPS_MANTIS_EXECUTION_MODE"
     )
+    mantis_root: Path | None = Field(
+        default=None,
+        validation_alias="SECOPS_MANTIS_ROOT",
+    )
+    mantis_base_url: str | None = Field(
+        default=None,
+        validation_alias="SECOPS_MANTIS_BASE_URL",
+    )
+    mantis_api_key: str | None = Field(
+        default=None,
+        validation_alias="SECOPS_MANTIS_API_KEY",
+    )
+    mantis_model: str = Field(
+        default="gpt-4o",
+        validation_alias="SECOPS_MANTIS_MODEL",
+    )
+    mantis_timeout_seconds: int = Field(
+        default=120,
+        validation_alias="SECOPS_MANTIS_TIMEOUT_SECONDS",
+    )
+    mantis_max_file_bytes: int = Field(
+        default=50 * 1024,
+        validation_alias="SECOPS_MANTIS_MAX_FILE_BYTES",
+    )
+    mantis_max_total_bytes: int = Field(
+        default=500 * 1024,
+        validation_alias="SECOPS_MANTIS_MAX_TOTAL_BYTES",
+    )
+    mantis_max_skill_bytes: int = Field(
+        default=256 * 1024,
+        validation_alias="SECOPS_MANTIS_MAX_SKILL_BYTES",
+    )
+    mantis_max_response_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        validation_alias="SECOPS_MANTIS_MAX_RESPONSE_BYTES",
+    )
 
     def get_dast_allowed_hosts(self) -> list[str]:
         """Return list of allowed hosts for DAST scanning."""

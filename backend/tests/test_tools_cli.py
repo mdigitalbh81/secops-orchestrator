@@ -42,11 +42,11 @@ def test_cli_tools_human_output(capsys) -> None:
             name="Mantis",
             category=ToolCategory.AGENT,
             installed_version=None,
-            configured_version="disabled (contract only)",
+            configured_version="external safe-analysis (disabled by default)",
             available_version="d13c93fb",
             source="google/mantis",
             update_policy="manual contract",
-            availability="contract_only",
+            availability="optional",
             status=ToolStatus.OPTIONAL,
         ),
     ]

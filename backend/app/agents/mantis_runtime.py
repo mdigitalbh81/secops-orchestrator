@@ -328,6 +328,7 @@ class MantisSafeRuntime:
             raise MantisValidationError(
                 f"Mantis revision must be a full 40-char hex SHA (got '{expected_revision}')"
             )
+        expected_revision = expected_revision.lower()
 
         config = RunnerConfig(timeout=10, allowed_roots=[resolved_root])
         res = run_command_sync(["git", "rev-parse", "HEAD"], cwd=resolved_root, config=config)
@@ -335,7 +336,7 @@ class MantisSafeRuntime:
             raise MantisValidationError(
                 f"Failed to inspect git revision in Mantis root: {res.stderr.strip()}"
             )
-        detected_rev = res.stdout.strip()
+        detected_rev = res.stdout.strip().lower()
         if detected_rev != expected_revision:
             raise MantisValidationError(
                 f"Mantis revision mismatch: expected '{expected_revision}', detected '{detected_rev}'"
@@ -378,6 +379,7 @@ class MantisSafeRuntime:
             raise MantisValidationError(
                 f"Cannot load skill without a valid pinned revision (got '{revision}')"
             )
+        revision = revision.lower()
 
         config = RunnerConfig(timeout=10, allowed_roots=[resolved_mantis])
 
@@ -417,7 +419,7 @@ class MantisSafeRuntime:
 
         # Verify working-tree skill has NOT diverged from pinned commit
         diff_res = run_command_sync(
-            ["git", "diff", "--quiet", revision, "--", rel_path],
+            ["git", "diff", "--quiet", "--no-ext-diff", "--no-textconv", revision, "--", rel_path],
             cwd=resolved_mantis,
             config=config,
         )
@@ -455,16 +457,16 @@ class MantisSafeRuntime:
                 f"Supported modes: read_only, dry_run"
             )
 
-        # Revision must be full SHA
-        if cfg.mantis_revision and not _FULL_SHA_RE.match(cfg.mantis_revision):
+        # Revision must be a full SHA
+        if not cfg.mantis_revision or not _FULL_SHA_RE.match(cfg.mantis_revision):
             return False, (
                 f"Mantis revision is not a full 40-char SHA: '{cfg.mantis_revision}'. "
                 f"Set SECOPS_MANTIS_REVISION to a full commit hash."
             )
+        expected_rev = cfg.mantis_revision.lower()
 
         if not cfg.mantis_root:
-            return False, "Mantis root directory is not configured (SECOPS_MANTIS_ROOT)"
-
+            return False, "Mantis root directory not configured (SECOPS_MANTIS_ROOT)"
         resolved_root = cfg.mantis_root.resolve()
         if not resolved_root.is_dir():
             return False, f"Mantis root directory does not exist: {resolved_root}"
@@ -474,11 +476,12 @@ class MantisSafeRuntime:
             res = run_command_sync(["git", "rev-parse", "HEAD"], cwd=resolved_root, config=config)
             if res.return_code != 0:
                 return False, f"Mantis root is not a valid git repository: {res.stderr.strip()}"
-            detected_rev = res.stdout.strip()
-            if detected_rev != cfg.mantis_revision:
-                return False, (
-                    f"Mantis revision mismatch: expected '{cfg.mantis_revision}', "
-                    f"detected '{detected_rev}'"
+            detected_rev = res.stdout.strip().lower()
+            if detected_rev != expected_rev:
+                return (
+                    False,
+                    f"Mantis revision mismatch: expected '{expected_rev}', "
+                    f"detected '{detected_rev}'",
                 )
         except Exception as exc:
             return False, f"Git revision check failed: {exc}"
@@ -489,7 +492,7 @@ class MantisSafeRuntime:
 
             # Check existence and reject symlinks
             ls_res = run_command_sync(
-                ["git", "ls-tree", cfg.mantis_revision, rel_path],
+                ["git", "ls-tree", expected_rev, rel_path],
                 cwd=resolved_root,
                 config=config,
             )
@@ -501,16 +504,35 @@ class MantisSafeRuntime:
 
             # Check blob size
             size_res = run_command_sync(
-                ["git", "cat-file", "-s", f"{cfg.mantis_revision}:{rel_path}"],
+                ["git", "cat-file", "-s", f"{expected_rev}:{rel_path}"],
                 cwd=resolved_root,
                 config=config,
             )
             if size_res.return_code != 0:
                 return False, f"Failed to inspect skill blob size: {rel_path}"
+            try:
+                blob_size = int(size_res.stdout.strip())
+            except ValueError:
+                return False, f"Malformed skill blob size output: {rel_path}"
+            if blob_size > cfg.mantis_max_skill_bytes:
+                return (
+                    False,
+                    f"Safe skill exceeds configured maximum size: {rel_path} "
+                    f"({blob_size} > {cfg.mantis_max_skill_bytes} bytes)",
+                )
 
             # Check working-tree divergence
             diff_res = run_command_sync(
-                ["git", "diff", "--quiet", cfg.mantis_revision, "--", rel_path],
+                [
+                    "git",
+                    "diff",
+                    "--quiet",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    expected_rev,
+                    "--",
+                    rel_path,
+                ],
                 cwd=resolved_root,
                 config=config,
             )
@@ -518,7 +540,6 @@ class MantisSafeRuntime:
                 return False, f"Safe Mantis skill differs from pinned revision: {rel_path}"
             if diff_res.return_code not in (0, 1):
                 return False, f"Failed to verify skill integrity: {rel_path}"
-
         if mode_str == "read_only" and not (cfg.mantis_base_url or cfg.mantis_api_key):
             return False, (
                 "Mantis provider not configured (SECOPS_MANTIS_BASE_URL or "

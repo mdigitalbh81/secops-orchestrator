@@ -667,7 +667,7 @@ class ToolchainManager:
         # Detect Mantis runtime availability
         from app.agents.mantis_runtime import MantisSafeRuntime
         mantis_runtime = MantisSafeRuntime()
-        mantis_available, mantis_reason = mantis_runtime.check_availability()
+        mantis_available, _ = mantis_runtime.check_availability()
         mantis_avail_str = "available" if mantis_available else "optional"
 
         tools.append(

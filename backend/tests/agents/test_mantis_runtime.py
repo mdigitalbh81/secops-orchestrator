@@ -912,3 +912,115 @@ async def test_response_capability_mismatch_rejected(tmp_path: Path) -> None:
         pytest.raises(MantisProviderError, match="capability mismatch"),
     ):
         await runtime.analyze(target, "review", settings=settings)
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Symlink in pinned revision rejected (mode 120000)
+# ---------------------------------------------------------------------------
+def test_pinned_symlink_skill_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "fake_mantis_symlink"
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Mantis Tester"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "mantis@test.local"], cwd=root, check=True)
+
+    outside = tmp_path / "outside_target.md"
+    outside.write_text("evil skill instructions\n", encoding="utf-8")
+
+    skill_path = root / "mantis-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.symlink_to(outside)
+
+    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "Commit symlinked skill"], cwd=root, check=True, capture_output=True)
+
+    res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True)
+    rev = res.stdout.strip()
+
+    runtime = MantisSafeRuntime()
+    with pytest.raises(MantisValidationError, match="symlink in pinned revision"):
+        runtime.load_skill(root, AgentCapability.REVIEW, 100000, expected_revision=rev)
+
+
+# ---------------------------------------------------------------------------
+# Requirement: External git diff helpers and textconv disabled
+# ---------------------------------------------------------------------------
+def test_git_diff_integrity_disables_external_diff_and_textconv(tmp_path: Path) -> None:
+    root, rev = create_fake_mantis_root(tmp_path)
+    runtime = MantisSafeRuntime()
+
+    from app.agents.mantis_runtime import run_command_sync
+
+    with patch("app.agents.mantis_runtime.run_command_sync", wraps=run_command_sync) as mock_cmd:
+        runtime.load_skill(root, AgentCapability.REVIEW, 100000, expected_revision=rev)
+        diff_calls = [
+            call.args[0]
+            for call in mock_cmd.call_args_list
+            if call.args and len(call.args[0]) >= 2 and call.args[0][:2] == ["git", "diff"]
+        ]
+        assert len(diff_calls) >= 1
+        for cmd in diff_calls:
+            assert "--no-ext-diff" in cmd
+            assert "--no-textconv" in cmd
+
+    settings = Settings(
+        mantis_enabled=True,
+        mantis_root=root,
+        mantis_revision=rev,
+        mantis_execution_mode="dry_run",
+    )
+    with patch("app.agents.mantis_runtime.run_command_sync", wraps=run_command_sync) as mock_cmd:
+        avail, _ = runtime.check_availability(settings)
+        assert avail is True
+        diff_calls = [
+            call.args[0]
+            for call in mock_cmd.call_args_list
+            if call.args and len(call.args[0]) >= 2 and call.args[0][:2] == ["git", "diff"]
+        ]
+        assert len(diff_calls) >= 1
+        for cmd in diff_calls:
+            assert "--no-ext-diff" in cmd
+            assert "--no-textconv" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Availability rejects oversized pinned skill
+# ---------------------------------------------------------------------------
+def test_check_availability_rejects_oversized_pinned_skill(tmp_path: Path) -> None:
+    root, rev = create_fake_mantis_root(tmp_path)
+    settings = Settings(
+        mantis_enabled=True,
+        mantis_root=root,
+        mantis_revision=rev,
+        mantis_execution_mode="dry_run",
+        mantis_max_skill_bytes=10,
+    )
+    runtime = MantisSafeRuntime()
+    avail, reason = runtime.check_availability(settings)
+    assert avail is False
+    assert "Safe skill exceeds configured maximum size" in reason or "size" in reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Full SHA case normalization
+# ---------------------------------------------------------------------------
+def test_full_sha_casing_normalized(tmp_path: Path) -> None:
+    root, rev = create_fake_mantis_root(tmp_path)
+    upper_rev = rev.upper()
+    runtime = MantisSafeRuntime()
+
+    resolved, detected = runtime.validate_mantis_root(root, upper_rev)
+    assert detected == rev.lower()
+
+    content, rel_path = runtime.load_skill(root, AgentCapability.REVIEW, 100000, expected_revision=upper_rev)
+    assert content
+    assert rel_path == "mantis-review/SKILL.md"
+
+    settings = Settings(
+        mantis_enabled=True,
+        mantis_root=root,
+        mantis_revision=upper_rev,
+        mantis_execution_mode="dry_run",
+    )
+    avail, _ = runtime.check_availability(settings)
+    assert avail is True

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 UPSTREAM_REPO = "https://github.com/google/mantis"
 DEFAULT_REVISION = "d13c93fb8e9779801711daea0d65fffa133c3b2d"
 LICENSE = "Apache-2.0"
-INTEGRATION_TYPE = "skills_and_contracts"
+INTEGRATION_TYPE = "safe_analysis_runtime"
 
 # Safe analysis capabilities permitted for future integration
 PERMITTED_SAFE_CAPABILITIES: frozenset[AgentCapability] = frozenset(
@@ -84,7 +84,7 @@ class MantisAdapter(AgenticSecurityAdapter):
 
     @property
     def version(self) -> str:
-        return "0.1.0-contract"
+        return "0.2.0-safe-runtime"
 
     @property
     def revision(self) -> str:

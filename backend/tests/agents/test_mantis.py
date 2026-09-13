@@ -18,7 +18,7 @@ def test_mantis_metadata_and_defaults() -> None:
     assert adapter.UPSTREAM_REPO == "https://github.com/google/mantis"
     assert adapter.DEFAULT_REVISION == "d13c93fb8e9779801711daea0d65fffa133c3b2d"
     assert adapter.LICENSE == "Apache-2.0"
-    assert adapter.INTEGRATION_TYPE == "skills_and_contracts"
+    assert adapter.INTEGRATION_TYPE == "safe_analysis_runtime"
     assert adapter.revision == "d13c93fb8e9779801711daea0d65fffa133c3b2d"
     assert not adapter.is_enabled()
     assert adapter.execution_mode == AgentExecutionMode.DISABLED

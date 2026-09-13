@@ -169,7 +169,7 @@ class ToolchainManager:
             "zap": "2.17.0",
             "nuclei_templates": "10.4.8",
             "trivy_db": "dynamic / cached",
-            "mantis": "disabled (contract only)",
+            "mantis": "external safe-analysis (disabled by default)",
         }
 
         if not self.repo_root:
@@ -663,19 +663,29 @@ class ToolchainManager:
 
         avail_mantis = self.check_upstream_version("mantis") if check_upstream else None
         mantis_avail_ver = avail_mantis[:8] if (check_upstream and avail_mantis) else None
+
+        # Detect Mantis runtime availability
+        from app.agents.mantis_runtime import MantisSafeRuntime
+        mantis_runtime = MantisSafeRuntime()
+        mantis_available, mantis_reason = mantis_runtime.check_availability()
+        mantis_avail_str = "available" if mantis_available else "optional"
+
         tools.append(
             ToolInfo(
                 name="Mantis",
                 category=ToolCategory.AGENT,
                 installed_version=None,
-                configured_version=configured.get("mantis", "disabled (contract only)"),
+                configured_version=configured.get("mantis", "external safe-analysis (disabled by default)"),
                 available_version=mantis_avail_ver,
                 source="google/mantis",
-                update_policy="manual contract",
-                availability="contract_only",
+                update_policy="manual / pinned revision",
+                availability=mantis_avail_str,
                 status=ToolStatus.OPTIONAL,
-                notes=f"Observed contract: {DEFAULT_REVISION[:8]}; active reproduction disabled",
-                runtime_source=RuntimeSource.CONFIG_ONLY,
+                notes=(
+                    f"External checkout, pinned revision {DEFAULT_REVISION[:8]}; "
+                    f"safe-analysis only; reproduce/chain/patch blocked"
+                ),
+                runtime_source=RuntimeSource.EXTERNAL,
             )
         )
 

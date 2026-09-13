@@ -78,7 +78,7 @@ def test_detect_configured_versions_from_files(tmp_path: Path) -> None:
     assert cfg["zap"] == "2.18.0"
     assert cfg["semgrep"] == "unpinned"
     assert cfg["codeql"] == "external (optional)"
-    assert cfg["mantis"] == "disabled (contract only)"
+    assert cfg["mantis"] == "external safe-analysis (disabled by default)"
 
 
 def test_run_safe_tool_command_timeout() -> None:
@@ -145,7 +145,7 @@ def test_get_inventory_offline_default() -> None:
     assert by_name["Mantis"].status == ToolStatus.OPTIONAL
     assert by_name["Mantis"].installed_version is None
     assert by_name["Mantis"].available_version is None
-    assert by_name["Mantis"].runtime_source == RuntimeSource.CONFIG_ONLY
+    assert by_name["Mantis"].runtime_source == RuntimeSource.EXTERNAL
 
 
 def test_get_inventory_with_upstream_updates() -> None:
@@ -401,3 +401,61 @@ def test_security_runner_boundary_enforced() -> None:
         mock_sync.return_value = RunResult(return_code=0, stdout="container-id\n", stderr="")
         mgr.is_worker_running()
         assert mock_sync.called
+
+# =========================================================================
+# PR #18 Review: Toolchain reporting tests
+# =========================================================================
+
+def test_mantis_inventory_not_contract_only() -> None:
+    """Mantis toolchain entry must NOT report contract_only or CONFIG_ONLY."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "detect_semgrep", return_value=("1.70.0", None, None)),
+        patch.object(mgr, "detect_codeql", return_value=(None, "Not present", ToolStatus.OPTIONAL)),
+        patch.object(mgr, "detect_trivy", return_value=("0.54.0", None, None)),
+        patch.object(mgr, "detect_pip_audit", return_value=("2.7.0", None, None)),
+        patch.object(mgr, "detect_npm", return_value=("9.2.0", None, None)),
+        patch.object(mgr, "detect_nuclei", return_value=("3.3.2", None, None)),
+        patch.object(mgr, "detect_zap", return_value=("2.17.0", None, None)),
+        patch.object(mgr, "detect_nuclei_templates", return_value=("10.4.8", None, None)),
+        patch.object(mgr, "detect_trivy_db", return_value=("v2", None, ToolStatus.CURRENT)),
+    ):
+        inventory = mgr.get_inventory(check_upstream=False)
+
+    by_name = {t.name: t for t in inventory}
+    mantis = by_name["Mantis"]
+
+    # Must NOT be contract_only or CONFIG_ONLY
+    assert mantis.availability != "contract_only"
+    assert mantis.runtime_source != RuntimeSource.CONFIG_ONLY
+    assert mantis.runtime_source == RuntimeSource.EXTERNAL
+
+    # configured_version must not say "contract only"
+    assert "contract only" not in (mantis.configured_version or "").lower()
+    assert "contract_only" not in (mantis.configured_version or "").lower()
+
+    # Notes should reflect external safe-analysis
+    assert mantis.notes is not None
+    assert "reproduce" in mantis.notes.lower() or "blocked" in mantis.notes.lower()
+
+
+def test_mantis_unconfigured_is_optional_no_crash() -> None:
+    """Mantis without any config must be OPTIONAL, must not crash secops tools."""
+    mgr = ToolchainManager()
+    with (
+        patch.object(mgr, "detect_semgrep", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_codeql", return_value=(None, "Not present", ToolStatus.OPTIONAL)),
+        patch.object(mgr, "detect_trivy", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_pip_audit", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_npm", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_nuclei", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_zap", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_nuclei_templates", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+        patch.object(mgr, "detect_trivy_db", return_value=(None, "not running", ToolStatus.UNKNOWN)),
+    ):
+        inventory = mgr.get_inventory(check_upstream=False)
+
+    by_name = {t.name: t for t in inventory}
+    mantis = by_name["Mantis"]
+    assert mantis.status == ToolStatus.OPTIONAL
+    assert mantis.runtime_source == RuntimeSource.EXTERNAL

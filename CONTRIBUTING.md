@@ -36,6 +36,22 @@ Recommended branch naming conventions:
 
 These names are recommended conventions to help organize work, not rigid policies.
 
+## Main Branch Governance
+
+The `main` branch is protected. All changes to `main` must be introduced through a Pull Request that satisfies the repository's required `Gate` GitHub Actions check.
+
+Current governance:
+
+- Pull Request required for all changes.
+- `Gate` status check required and must pass before merge.
+- Branch must be up to date with `main` before merge.
+- Unresolved review conversations block merge.
+- Protections apply to repository administrators.
+- Force pushes to `main` are disabled.
+- Deletion of `main` is disabled.
+- No approving review is currently required; the required review count is intentionally zero while the project has a single primary maintainer. This will be increased when additional active maintainers are available.
+- Merge commits remain supported; linear history is not required.
+
 ## Testing and Validation
 
 Pull Requests trigger automated validation gates via GitHub Actions. When branch protection is active, all checks aggregated by `Gate` must pass before merge (branch protection rulesets are configured separately). Contributors must run these same validation commands locally before opening or updating a pull request.

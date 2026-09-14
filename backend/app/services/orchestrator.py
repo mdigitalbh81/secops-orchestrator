@@ -31,6 +31,7 @@ from app.services.finding_disposition import (
     apply_dispositions_to_findings,
     resolve_dispositions_batch,
 )
+from app.services.mantis_advisory import run_mantis_advisory_analysis
 from app.services.risk_engine import compute_risk_gate
 from app.services.stack_detector import detect_applicable_scanners
 from app.services.target_discovery import ScanTarget, discover_scan_targets
@@ -405,6 +406,17 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
                         raw_data=ev_data,
                     )
                     session.add(evidence)
+
+        # 6. Agentic advisory track (Mantis safe runtime, strictly advisory)
+        try:
+            await run_mantis_advisory_analysis(
+                scan=scan,
+                project_path=project_path,
+                session=session,
+                settings=settings,
+            )
+        except Exception as exc:
+            logger.warning("Unexpected error during Mantis advisory stage: %s", exc)
 
         scan.status = ScanStatus.COMPLETED
         scan.risk_gate = risk_gate

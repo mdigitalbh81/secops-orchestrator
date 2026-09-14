@@ -344,7 +344,9 @@ async def get_scan_summary(scan_id: str, db: AsyncSession = Depends(get_db)) -> 
 
     # Disposition status counts
     actionable_count = sum(
-        1 for f in findings if FindingStatus(f.status) == FindingStatus.OPEN
+        1
+        for f in findings
+        if FindingStatus(f.status) == FindingStatus.OPEN and f.scanner_name != "mantis"
     )
     false_positive_count = sum(
         1 for f in findings if FindingStatus(f.status) == FindingStatus.FALSE_POSITIVE

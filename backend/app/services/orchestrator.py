@@ -416,7 +416,11 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
                 settings=settings,
             )
         except Exception as exc:
-            logger.warning("Unexpected error during Mantis advisory stage: %s", exc)
+            logger.warning(
+                "Unexpected error during Mantis advisory stage: %s: %s",
+                exc.__class__.__name__,
+                redact_secrets(str(exc))[:200],
+            )
 
         scan.status = ScanStatus.COMPLETED
         scan.risk_gate = risk_gate

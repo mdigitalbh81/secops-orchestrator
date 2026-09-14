@@ -49,6 +49,7 @@ BLOCKED_ALIASES: frozenset[str] = frozenset(
 EXCLUDED_DIR_NAMES: frozenset[str] = frozenset(
     {
         ".git",
+        ".jarvis",
         "node_modules",
         "dist",
         "build",

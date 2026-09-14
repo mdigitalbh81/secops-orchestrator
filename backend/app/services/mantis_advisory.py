@@ -100,6 +100,7 @@ async def run_mantis_advisory_analysis(
             f"Mantis execution mode '{settings.mantis_execution_mode}' is not eligible "
             "for pipeline auto-run (requires 'read_only')"
         )
+        sanitized_reason = redact_secrets(reason)[:1000]
         raw_meta = {
             "capability": AgentCapability.REVIEW.value,
             "advisory": True,
@@ -113,7 +114,7 @@ async def run_mantis_advisory_analysis(
             scan_id=scan.id,
             scanner_name="mantis-advisory-review",
             status=ScannerRunStatus.UNAVAILABLE,
-            error_message=reason[:1000],
+            error_message=sanitized_reason,
             duration_seconds=0.0,
             raw_output=json.dumps(raw_meta),
             completed_at=datetime.now(UTC),
@@ -124,13 +125,45 @@ async def run_mantis_advisory_analysis(
             attempted=True,
             available=False,
             status=ScannerRunStatus.UNAVAILABLE.value,
-            error_message=reason,
+            error_message=sanitized_reason,
         )
 
     # Precondition 4: Check runtime availability
     runtime = MantisSafeRuntime()
-    available, reason = runtime.check_availability(settings)
+    try:
+        available, reason = runtime.check_availability(settings)
+    except Exception as exc:
+        error_class = exc.__class__.__name__
+        sanitized_msg = redact_secrets(str(exc))[:1000]
+        raw_meta = {
+            "capability": AgentCapability.REVIEW.value,
+            "advisory": True,
+            "risk_gate_eligible": False,
+            "findings_count": 0,
+            "duration_seconds": 0.0,
+            "summary": "",
+            "error_class": error_class,
+        }
+        runner = ScannerRun(
+            scan_id=scan.id,
+            scanner_name="mantis-advisory-review",
+            status=ScannerRunStatus.FAILED,
+            error_message=sanitized_msg,
+            duration_seconds=0.0,
+            raw_output=json.dumps(raw_meta),
+            completed_at=datetime.now(UTC),
+        )
+        session.add(runner)
+        await session.flush()
+        return MantisAdvisoryResult(
+            attempted=True,
+            available=False,
+            status=ScannerRunStatus.FAILED.value,
+            error_message=sanitized_msg,
+        )
+
     if not available:
+        sanitized_reason = redact_secrets(reason or "")[:1000]
         raw_meta = {
             "capability": AgentCapability.REVIEW.value,
             "advisory": True,
@@ -144,7 +177,7 @@ async def run_mantis_advisory_analysis(
             scan_id=scan.id,
             scanner_name="mantis-advisory-review",
             status=ScannerRunStatus.UNAVAILABLE,
-            error_message=reason[:1000],
+            error_message=sanitized_reason,
             duration_seconds=0.0,
             raw_output=json.dumps(raw_meta),
             completed_at=datetime.now(UTC),
@@ -155,7 +188,7 @@ async def run_mantis_advisory_analysis(
             attempted=True,
             available=False,
             status=ScannerRunStatus.UNAVAILABLE.value,
-            error_message=reason,
+            error_message=sanitized_reason,
         )
 
     # Execution record: mark RUNNING
@@ -204,7 +237,7 @@ async def run_mantis_advisory_analysis(
         )
 
     duration = exec_result.duration_seconds
-    summary_snippet = (exec_result.summary or "")[:500]
+    summary_snippet = redact_secrets(exec_result.summary or "")[:500]
     pinned_rev = exec_result.metadata.get("mantis_revision") or settings.mantis_revision
     raw_meta = {
         "capability": AgentCapability.REVIEW.value,

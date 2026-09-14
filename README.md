@@ -445,12 +445,25 @@ Configuration example:
 SECOPS_MANTIS_ENABLED=true
 SECOPS_MANTIS_PIPELINE_ENABLED=true
 SECOPS_MANTIS_EXECUTION_MODE=read_only
-SECOPS_MANTIS_ROOT=/opt/mantis
+SECOPS_MANTIS_ROOT=/home/felps/tools/mantis
 SECOPS_MANTIS_REVISION=d13c93fb8e9779801711daea0d65fffa133c3b2d
 SECOPS_MANTIS_BASE_URL=https://api.openai.com/v1
 SECOPS_MANTIS_API_KEY=your-api-key-here
 SECOPS_MANTIS_MODEL=gpt-4o
 ```
+
+Configuring `.env` alone is not sufficient for containerized worker deployments because the external checkout must be mounted into the worker container. SecOps Orchestrator does not download, bundle, or install Google Mantis.
+
+Launch the worker container with the Mantis overlay:
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.mantis.yml \
+  up -d --force-recreate worker
+```
+
+- **HOST**: `SECOPS_MANTIS_ROOT` specifies the host checkout path (e.g., `/home/felps/tools/mantis`).
+- **WORKER**: The directory is mounted read-only to `/opt/secops-mantis`, with `SECOPS_MANTIS_ROOT=/opt/secops-mantis` inside the worker container.
 
 ---
 

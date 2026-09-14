@@ -1,0 +1,28 @@
+# Overlay for mounting a user-provided, host-installed Google Mantis checkout into the worker container.
+# SecOps Orchestrator does NOT download, bundle, install, or distribute Google Mantis.
+#
+# Usage:
+#   export SECOPS_MANTIS_ROOT=/absolute/path/to/mantis
+#   docker compose -f docker-compose.yml -f docker-compose.mantis.yml up -d --force-recreate worker
+
+services:
+  worker:
+    environment:
+      SECOPS_MANTIS_ENABLED: ${SECOPS_MANTIS_ENABLED:-false}
+      SECOPS_MANTIS_PIPELINE_ENABLED: ${SECOPS_MANTIS_PIPELINE_ENABLED:-false}
+      SECOPS_MANTIS_EXECUTION_MODE: ${SECOPS_MANTIS_EXECUTION_MODE:-disabled}
+      SECOPS_MANTIS_ROOT: /opt/secops-mantis
+      SECOPS_MANTIS_REVISION: ${SECOPS_MANTIS_REVISION:-d13c93fb8e9779801711daea0d65fffa133c3b2d}
+      SECOPS_MANTIS_BASE_URL: ${SECOPS_MANTIS_BASE_URL:-}
+      SECOPS_MANTIS_API_KEY: ${SECOPS_MANTIS_API_KEY:-}
+      SECOPS_MANTIS_MODEL: ${SECOPS_MANTIS_MODEL:-gpt-4o}
+      SECOPS_MANTIS_TIMEOUT_SECONDS: ${SECOPS_MANTIS_TIMEOUT_SECONDS:-120}
+      SECOPS_MANTIS_MAX_FILE_BYTES: ${SECOPS_MANTIS_MAX_FILE_BYTES:-51200}
+      SECOPS_MANTIS_MAX_TOTAL_BYTES: ${SECOPS_MANTIS_MAX_TOTAL_BYTES:-512000}
+      SECOPS_MANTIS_MAX_SKILL_BYTES: ${SECOPS_MANTIS_MAX_SKILL_BYTES:-262144}
+      SECOPS_MANTIS_MAX_RESPONSE_BYTES: ${SECOPS_MANTIS_MAX_RESPONSE_BYTES:-2097152}
+    volumes:
+      - type: bind
+        source: ${SECOPS_MANTIS_ROOT:?SECOPS_MANTIS_ROOT must point to an external google/mantis checkout}
+        target: /opt/secops-mantis
+        read_only: true

@@ -84,9 +84,9 @@ class Settings(BaseSettings):
         default=False, validation_alias="SECOPS_MANTIS_PIPELINE_ENABLED"
     )
     mantis_revision: str = Field(
-       default="d13c93fb8e9779801711daea0d65fffa133c3b2d",
-       validation_alias="SECOPS_MANTIS_REVISION",
-   )
+        default="d13c93fb8e9779801711daea0d65fffa133c3b2d",
+        validation_alias="SECOPS_MANTIS_REVISION",
+    )
     mantis_execution_mode: str = Field(
         default="disabled", validation_alias="SECOPS_MANTIS_EXECUTION_MODE"
     )

@@ -18,6 +18,7 @@ from app.agents.mantis_runtime import (
     MantisProviderError,
     MantisSafeRuntime,
     MantisValidationError,
+    collect_target_payload,
 )
 from app.core.config import Settings
 from app.models.enums import EvidenceLevel, FindingStatus
@@ -1024,3 +1025,29 @@ def test_full_sha_casing_normalized(tmp_path: Path) -> None:
     )
     avail, _ = runtime.check_availability(settings)
     assert avail is True
+
+
+# ---------------------------------------------------------------------------
+# Requirement: Exclude .jarvis metadata from LLM payload
+# ---------------------------------------------------------------------------
+
+
+def test_collect_target_payload_excludes_jarvis_metadata(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hello world')\n", encoding="utf-8")
+    jarvis_dir = tmp_path / ".jarvis"
+    knowledge_dir = jarvis_dir / "knowledge"
+    knowledge_dir.mkdir(parents=True)
+    (jarvis_dir / "project.json").write_text('{"secret": "jarvis_marker_project"}', encoding="utf-8")
+    (jarvis_dir / "state.json").write_text('{"secret": "jarvis_marker_state"}', encoding="utf-8")
+    (knowledge_dir / "ARCHITECTURE.md").write_text("SECRET ARCHITECTURE MARKER", encoding="utf-8")
+
+    payload, file_count, _total_bytes = collect_target_payload(
+        tmp_path, max_file_bytes=50000, max_total_bytes=500000
+    )
+
+    assert file_count == 1
+    assert ".jarvis" not in payload
+    assert "jarvis_marker_project" not in payload
+    assert "jarvis_marker_state" not in payload
+    assert "SECRET ARCHITECTURE MARKER" not in payload
+    assert "app.py" in payload

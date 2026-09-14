@@ -55,6 +55,14 @@ class Finding(Base):
         "FindingEvidence", back_populates="finding", lazy="selectin"
     )
 
+    @property
+    def advisory(self) -> bool:
+        return self.scanner_name == "mantis"
+
+    @property
+    def risk_gate_eligible(self) -> bool:
+        return self.scanner_name != "mantis" and self.status == FindingStatus.OPEN
+
 
 class FindingEvidence(Base):
     __tablename__ = "finding_evidences"

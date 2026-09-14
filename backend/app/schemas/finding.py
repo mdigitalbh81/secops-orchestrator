@@ -32,6 +32,8 @@ class FindingResponse(BaseModel):
     normalized_fingerprint: str
     status: FindingStatus
     created_at: datetime
+    advisory: bool = False
+    risk_gate_eligible: bool = True
 
 
 class EvidenceResponse(BaseModel):

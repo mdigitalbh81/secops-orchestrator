@@ -56,6 +56,7 @@ def test_cli_mantis_status_human(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert "Google Mantis Safe Analysis Runtime" in captured.out
     assert "Enabled:" in captured.out
+    assert "Pipeline Enabled:" in captured.out
     assert "Safe Capabilities:" in captured.out
     assert "Blocked Capabilities:" in captured.out
     assert "reproduce, chain, patch" in captured.out
@@ -68,6 +69,7 @@ def test_cli_mantis_status_json(capsys: pytest.CaptureFixture[str]) -> None:
     data = json.loads(captured.out)
     assert isinstance(data, dict)
     assert "enabled" in data
+    assert "pipeline_enabled" in data
     assert "safe_capabilities" in data
     assert "blocked_capabilities" in data
     assert data["blocked_capabilities"] == ["reproduce", "chain", "patch"]

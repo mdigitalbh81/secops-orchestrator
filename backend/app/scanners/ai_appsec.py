@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 EXCLUDED_DIR_NAMES = {
     ".git",
+    ".jarvis",
     "node_modules",
     "dist",
     "build",

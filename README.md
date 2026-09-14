@@ -429,6 +429,42 @@ SecOps Orchestrator is designed for high-assurance, safe operational use across 
 - **Evidence Safety Invariant**: Vulnerability findings ingested from LLMs or Mantis are strictly classified as `SINGLE_SOURCE` evidence. Model assertions claiming a flaw is "verified" or "reproduced" are never promoted to `RUNTIME_VALIDATED` without independent, controlled verification.
 - **No False Sense of Immunity**: Passing a SecOps Orchestrator scan (`PASS` risk gate) indicates that no findings exceeding configured policy thresholds were identified by enabled tools. It does not certify that an application is entirely free of vulnerabilities.
 
+### Google Mantis Advisory Pipeline Integration
+
+When enabled, Google Mantis safe analysis runs as an opt-in **advisory stage** in the standard scan pipeline:
+
+- **Disabled by default**: Requires both `SECOPS_MANTIS_ENABLED=true` and `SECOPS_MANTIS_PIPELINE_ENABLED=true`.
+- **Execution Mode**: Requires `SECOPS_MANTIS_EXECUTION_MODE=read_only`. The pipeline does not run Mantis automatically in `dry_run`, `disabled`, `local`, or `sandbox`.
+- **Eligible Scan Modes**: `ScanMode.SOURCE` and `ScanMode.SOURCE_AND_DAST` only. Never runs in `ScanMode.DAST_ONLY`.
+- **Capability Scope**: Executes `AgentCapability.REVIEW` only. Dangerous capabilities (`reproduce`, `chain`, `patch`) remain strictly blocked.
+- **Strict Advisory Segregation**: Mantis findings are persisted standalone (`correlation_group_id = None`, `status = FindingStatus.OPEN`, `evidence_level = EvidenceLevel.SINGLE_SOURCE`). They are **never** passed to deterministic deduplication, cross-scanner correlation, confidence adjustment, disposition carryover, or Risk Gate calculation (`risk_gate_eligible = False`).
+- **Fail-Open Isolation**: Provider timeouts, schema errors, HTTP errors (401/429/500), or runtime validation errors never fail the main scan or alter the deterministic Risk Gate. An audit record is created in `ScannerRun` (`scanner_name = "mantis-advisory-review"`).
+
+Configuration example:
+```bash
+SECOPS_MANTIS_ENABLED=true
+SECOPS_MANTIS_PIPELINE_ENABLED=true
+SECOPS_MANTIS_EXECUTION_MODE=read_only
+SECOPS_MANTIS_ROOT=/home/felps/tools/mantis
+SECOPS_MANTIS_REVISION=d13c93fb8e9779801711daea0d65fffa133c3b2d
+SECOPS_MANTIS_BASE_URL=https://api.openai.com/v1
+SECOPS_MANTIS_API_KEY=your-api-key-here
+SECOPS_MANTIS_MODEL=gpt-4o
+```
+
+Configuring `.env` alone is not sufficient for containerized worker deployments because the external checkout must be mounted into the worker container. SecOps Orchestrator does not download, bundle, or install Google Mantis.
+
+Launch the worker container with the Mantis overlay:
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.mantis.yml \
+  up -d --force-recreate worker
+```
+
+- **HOST**: `SECOPS_MANTIS_ROOT` specifies the host checkout path (e.g., `/home/felps/tools/mantis`).
+- **WORKER**: The directory is mounted read-only to `/opt/secops-mantis`, with `SECOPS_MANTIS_ROOT=/opt/secops-mantis` inside the worker container.
+
 ---
 
 ## Running Tests

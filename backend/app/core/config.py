@@ -80,6 +80,9 @@ class Settings(BaseSettings):
 
     # Google Mantis Agentic Security Integration (contract/boundary foundation)
     mantis_enabled: bool = Field(default=False, validation_alias="SECOPS_MANTIS_ENABLED")
+    mantis_pipeline_enabled: bool = Field(
+        default=False, validation_alias="SECOPS_MANTIS_PIPELINE_ENABLED"
+    )
     mantis_revision: str = Field(
         default="d13c93fb8e9779801711daea0d65fffa133c3b2d",
         validation_alias="SECOPS_MANTIS_REVISION",

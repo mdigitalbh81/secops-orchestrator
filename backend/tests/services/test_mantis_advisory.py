@@ -828,10 +828,12 @@ async def test_pipeline_structural_isolation_arguments(
     real_compute_risk_gate = orch.compute_risk_gate
     real_correlate = orch.correlate_findings
     real_adjust_conf = orch.adjust_confidence
+    real_dedup = orch.deduplicate_findings
 
     gate_findings_passed = []
     correlate_findings_passed = []
     adjust_findings_passed = []
+    dedup_findings_passed = []
 
     def spy_risk_gate(findings):
         gate_findings_passed.extend(findings)
@@ -844,6 +846,10 @@ async def test_pipeline_structural_isolation_arguments(
     def spy_adjust(findings):
         adjust_findings_passed.extend(findings)
         return real_adjust_conf(findings)
+
+    def spy_dedup(findings):
+        dedup_findings_passed.extend(findings)
+        return real_dedup(findings)
 
     async def mock_run_command(argv, cwd=None, config=None):
         if "--version" in argv:
@@ -862,6 +868,7 @@ async def test_pipeline_structural_isolation_arguments(
         patch.object(orch, "compute_risk_gate", side_effect=spy_risk_gate),
         patch.object(orch, "correlate_findings", side_effect=spy_correlate),
         patch.object(orch, "adjust_confidence", side_effect=spy_adjust),
+        patch.object(orch, "deduplicate_findings", side_effect=spy_dedup),
         patch.object(MantisSafeRuntime, "check_availability", return_value=(True, "available")),
         patch.object(MantisSafeRuntime, "analyze", new_callable=AsyncMock, return_value=mock_result),
     ):
@@ -869,11 +876,13 @@ async def test_pipeline_structural_isolation_arguments(
 
     # Assert deterministic findings entered the deterministic steps
     assert len(gate_findings_passed) > 0
+    assert len(dedup_findings_passed) > 0
     assert len(correlate_findings_passed) > 0
     assert len(adjust_findings_passed) > 0
 
     # Invariant: NO mantis finding was in any deterministic gate/dedup/correlation input
     assert all(f.scanner_name != "mantis" for f in gate_findings_passed)
+    assert all(f.scanner_name != "mantis" for f in dedup_findings_passed)
     assert all(f.scanner_name != "mantis" for f in correlate_findings_passed)
     assert all(f.scanner_name != "mantis" for f in adjust_findings_passed)
 
@@ -995,7 +1004,43 @@ async def test_scan_summary_actionable_count_excludes_mantis(client):
         severity=Severity.HIGH,
         status=FindingStatus.OPEN,
     )
-    db.add_all([f_det, f_mantis_1, f_mantis_2])
+    f_fp = Finding(
+        scan_id=scan_id,
+        scanner_name="semgrep",
+        title="FP Finding",
+        raw_fingerprint="fp-fp",
+        normalized_fingerprint="nfp-fp",
+        severity=Severity.HIGH,
+        status=FindingStatus.FALSE_POSITIVE,
+    )
+    f_ar = Finding(
+        scan_id=scan_id,
+        scanner_name="semgrep",
+        title="AR Finding",
+        raw_fingerprint="fp-ar",
+        normalized_fingerprint="nfp-ar",
+        severity=Severity.HIGH,
+        status=FindingStatus.ACCEPTED_RISK,
+    )
+    f_abd = Finding(
+        scan_id=scan_id,
+        scanner_name="semgrep",
+        title="ABD Finding",
+        raw_fingerprint="fp-abd",
+        normalized_fingerprint="nfp-abd",
+        severity=Severity.HIGH,
+        status=FindingStatus.ACCEPTED_BY_DESIGN,
+    )
+    f_fixed = Finding(
+        scan_id=scan_id,
+        scanner_name="semgrep",
+        title="Fixed Finding",
+        raw_fingerprint="fp-fixed",
+        normalized_fingerprint="nfp-fixed",
+        severity=Severity.HIGH,
+        status=FindingStatus.FIXED,
+    )
+    db.add_all([f_det, f_mantis_1, f_mantis_2, f_fp, f_ar, f_abd, f_fixed])
     await db.commit()
 
     sum_res = await client.get(f"/api/scans/{scan_id}/summary")
@@ -1004,6 +1049,121 @@ async def test_scan_summary_actionable_count_excludes_mantis(client):
 
     # Actionable count must ONLY count deterministic open findings
     assert data["actionable_count"] == 1
+    assert data["false_positive_count"] == 1
+    assert data["accepted_risk_count"] == 1
+    assert data["accepted_by_design_count"] == 1
+    assert data["fixed_count"] == 1
     # Totals count all findings in database
     assert data["totals"]["critical"] == 1
-    assert data["totals"]["high"] == 2
+    assert data["totals"]["high"] == 6
+
+
+def test_finding_risk_gate_eligible_semantics() -> None:
+    """Test risk_gate_eligible property strictly reflects open deterministic findings."""
+    f_det_open = Finding(
+        scan_id="s1",
+        scanner_name="semgrep",
+        raw_fingerprint="fp1",
+        normalized_fingerprint="nfp1",
+        status=FindingStatus.OPEN,
+    )
+    assert f_det_open.risk_gate_eligible is True
+
+    f_mantis_open = Finding(
+        scan_id="s1",
+        scanner_name="mantis",
+        raw_fingerprint="fp2",
+        normalized_fingerprint="nfp2",
+        status=FindingStatus.OPEN,
+    )
+    assert f_mantis_open.risk_gate_eligible is False
+
+    for non_open_status in [
+        FindingStatus.FALSE_POSITIVE,
+        FindingStatus.ACCEPTED_RISK,
+        FindingStatus.ACCEPTED_BY_DESIGN,
+        FindingStatus.FIXED,
+    ]:
+        f_det_non_open = Finding(
+            scan_id="s1",
+            scanner_name="semgrep",
+            raw_fingerprint=f"fp-{non_open_status.value}",
+            normalized_fingerprint=f"nfp-{non_open_status.value}",
+            status=non_open_status,
+        )
+        assert f_det_non_open.risk_gate_eligible is False, f"Expected False for {non_open_status}"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_check_availability_exception_audited(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """Requirement: runtime check_availability exception handled fail-open and audited without leaking secrets."""
+    target = _create_sample_target(tmp_path)
+    project = Project(name="Project Check Availability Throw")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(
+        project_id=project.id,
+        source_path=str(target),
+        scan_mode=ScanMode.SOURCE,
+    )
+    db_session.add(scan)
+    await db_session.commit()
+
+    settings = Settings(
+        mantis_enabled=True,
+        mantis_pipeline_enabled=True,
+        mantis_execution_mode="read_only",
+        allowed_workspace_root=tmp_path,
+    )
+
+    async def mock_run_command(argv, cwd=None, config=None):
+        if "--version" in argv:
+            return RunResult(return_code=0, stdout="1.0.0", stderr="")
+        return RunResult(return_code=0, stdout="{}", stderr="")
+
+    secret_raw = "sk-live-secret-key-1234567890"
+    secret_in_exception = f"api_key='{secret_raw}'"
+    analyze_mock = AsyncMock()
+
+    with (
+        patch("app.services.orchestrator.get_settings", return_value=settings),
+        patch("app.services.mantis_advisory.get_settings", return_value=settings),
+        patch("app.scanners.base.run_command", side_effect=mock_run_command),
+        patch("app.scanners.semgrep.run_command", side_effect=mock_run_command),
+        patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.trivy.run_command", side_effect=mock_run_command),
+        patch.object(
+            MantisSafeRuntime,
+            "check_availability",
+            side_effect=RuntimeError(f"Availability check crash: {secret_in_exception}"),
+        ),
+        patch.object(MantisSafeRuntime, "analyze", new_callable=AsyncMock, side_effect=analyze_mock),
+    ):
+        await run_scan(scan.id, db_session)
+
+    await db_session.refresh(scan)
+    assert scan.status == ScanStatus.COMPLETED
+    assert scan.risk_gate == RiskGate.PASS
+    assert analyze_mock.called is False
+
+    runs = (
+        await db_session.execute(
+            select(ScannerRun).where(
+                ScannerRun.scan_id == scan.id,
+                ScannerRun.scanner_name == "mantis-advisory-review",
+            )
+        )
+    ).scalars().all()
+
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status in (ScannerRunStatus.FAILED, ScannerRunStatus.UNAVAILABLE)
+    assert secret_raw not in (run.error_message or "")
+    assert secret_raw not in (run.raw_output or "")
+    raw_meta = json.loads(run.raw_output)
+    assert raw_meta["advisory"] is True
+    assert raw_meta["risk_gate_eligible"] is False
+    assert raw_meta["error_class"] == "RuntimeError"

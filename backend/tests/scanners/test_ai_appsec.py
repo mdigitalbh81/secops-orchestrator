@@ -167,3 +167,22 @@ async def test_prompt_injection_in_source_code_comment(tmp_path: Path):
     assert "--- BEGIN UNTRUSTED SOURCE FILE: injected.py ---" in payload
     assert "SYSTEM INSTRUCTION OVERRIDE" in payload
     assert "--- END UNTRUSTED SOURCE FILE: injected.py ---" in payload
+
+
+def test_collect_source_payload_excludes_jarvis_metadata(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hello world')\n", encoding="utf-8")
+    jarvis_dir = tmp_path / ".jarvis"
+    knowledge_dir = jarvis_dir / "knowledge"
+    knowledge_dir.mkdir(parents=True)
+    (jarvis_dir / "project.json").write_text('{"secret": "jarvis_marker_project"}', encoding="utf-8")
+    (jarvis_dir / "state.json").write_text('{"secret": "jarvis_marker_state"}', encoding="utf-8")
+    (knowledge_dir / "ARCHITECTURE.md").write_text("SECRET ARCHITECTURE MARKER", encoding="utf-8")
+
+    scanner = AiAppSecScanner()
+    payload = scanner.collect_source_payload(tmp_path)
+
+    assert "app.py" in payload
+    assert ".jarvis" not in payload
+    assert "jarvis_marker_project" not in payload
+    assert "jarvis_marker_state" not in payload
+    assert "SECRET ARCHITECTURE MARKER" not in payload

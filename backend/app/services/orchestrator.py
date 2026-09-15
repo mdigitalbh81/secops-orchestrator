@@ -24,6 +24,7 @@ from app.models.scanner_run import ScannerRun
 from app.scanners import get_all_scanners
 from app.scanners.base import NormalizedFinding, ScannerAdapter
 from app.security.runner import RunnerConfig, redact_secrets, validate_path
+from app.services.agentic_corroboration import apply_mantis_corroboration
 from app.services.confidence import adjust_confidence
 from app.services.correlation import correlate_findings
 from app.services.dedup import deduplicate_findings
@@ -31,7 +32,7 @@ from app.services.finding_disposition import (
     apply_dispositions_to_findings,
     resolve_dispositions_batch,
 )
-from app.services.mantis_advisory import run_mantis_advisory_analysis
+from app.services.mantis_advisory import MantisAdvisoryResult, run_mantis_advisory_analysis
 from app.services.risk_engine import compute_risk_gate
 from app.services.stack_detector import detect_applicable_scanners
 from app.services.target_discovery import ScanTarget, discover_scan_targets
@@ -344,18 +345,64 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
             if cg.findings:
                 cg.confidence = max(cg.confidence, max(f.confidence for f in cg.findings))
 
-        # 4. Risk gate evaluation
-        # 3b. Apply persistent dispositions (carryover from prior decisions)
+        # 4. Apply persistent dispositions (carryover from prior decisions)
         disp_keys = [(f.scanner_name, f.normalized_fingerprint) for f in deduped]
         dispositions = await resolve_dispositions_batch(
             session, project_id, disp_keys
         )
         apply_dispositions_to_findings(deduped, dispositions)
 
-        # 4. Risk gate evaluation (only actionable findings)
+        # 5. Agentic advisory track (Mantis safe runtime, strictly advisory)
+        mantis_result: MantisAdvisoryResult | None = None
+        try:
+            mantis_result = await run_mantis_advisory_analysis(
+                scan=scan,
+                project_path=project_path,
+                session=session,
+                settings=settings,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Unexpected error during Mantis advisory stage: %s: %s",
+                exc.__class__.__name__,
+                redact_secrets(str(exc))[:200],
+            )
+
+        # 6. Mantis Corroboration Policy (PR20 opt-in)
+        if (
+            settings.mantis_gate_corroboration_enabled
+            and settings.mantis_pipeline_enabled
+            and settings.mantis_enabled
+            and (settings.mantis_execution_mode or "").lower() == "read_only"
+            and mantis_result is not None
+            and mantis_result.corroboration_candidates
+        ):
+            corroboration_res = apply_mantis_corroboration(
+                deterministic_findings=deduped,
+                correlation_groups=correlation_groups,
+                candidates=mantis_result.corroboration_candidates,
+            )
+            if mantis_result.runner is not None and corroboration_res:
+                try:
+                    raw_meta = json.loads(mantis_result.runner.raw_output or "{}")
+                    raw_meta.update(
+                        {
+                            "corroboration_enabled": True,
+                            "corroboration_candidates": len(
+                                mantis_result.corroboration_candidates
+                            ),
+                            "promotions_count": corroboration_res.promotions_count,
+                            "ambiguous_count": corroboration_res.ambiguous_count,
+                        }
+                    )
+                    mantis_result.runner.raw_output = json.dumps(raw_meta)
+                except Exception as exc:
+                    logger.debug("Failed to record corroboration metadata on runner: %s", exc)
+
+        # 7. Final Risk gate evaluation (strictly deterministic findings only)
         risk_gate = compute_risk_gate(deduped)
 
-        # 5. Persist correlation groups and findings
+    # 5. Persist correlation groups and findings
         for group_data in correlation_groups:
             db_group = CorrelationGroup(
                 id=group_data.id,
@@ -398,29 +445,19 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
                 session.add(finding)
                 await session.flush()
 
-                evidences_to_save = nf.evidences or ([nf.raw_data] if nf.raw_data else [])
-                for ev_data in evidences_to_save:
-                    evidence = FindingEvidence(
-                        finding_id=finding.id,
-                        scanner_name=nf.scanner_name,
-                        raw_data=ev_data,
-                    )
-                    session.add(evidence)
-
-        # 6. Agentic advisory track (Mantis safe runtime, strictly advisory)
-        try:
-            await run_mantis_advisory_analysis(
-                scan=scan,
-                project_path=project_path,
-                session=session,
-                settings=settings,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Unexpected error during Mantis advisory stage: %s: %s",
-                exc.__class__.__name__,
-                redact_secrets(str(exc))[:200],
-            )
+            evidences_to_save = nf.evidences or ([nf.raw_data] if nf.raw_data else [])
+            for ev_data in evidences_to_save:
+                ev_scanner = (
+                    ev_data.get("scanner_name")
+                    or ev_data.get("source_agent")
+                    or nf.scanner_name
+                ) if isinstance(ev_data, dict) else nf.scanner_name
+                evidence = FindingEvidence(
+                    finding_id=finding.id,
+                    scanner_name=ev_scanner,
+                    raw_data=ev_data,
+                )
+                session.add(evidence)
 
         scan.status = ScanStatus.COMPLETED
         scan.risk_gate = risk_gate

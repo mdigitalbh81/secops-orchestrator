@@ -26,6 +26,7 @@ from app.models.finding import Finding, FindingEvidence
 from app.models.scan import Scan
 from app.models.scanner_run import ScannerRun
 from app.security.runner import redact_secrets
+from app.services.agentic_corroboration import MantisCorroborationCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,10 @@ class MantisAdvisoryResult:
     analysis: str = ""
     duration_seconds: float = 0.0
     error_message: str | None = None
+    corroboration_candidates: list[MantisCorroborationCandidate] = field(
+        default_factory=list
+    )
+    runner: ScannerRun | None = None
 
 
 async def run_mantis_advisory_analysis(
@@ -126,6 +131,7 @@ async def run_mantis_advisory_analysis(
             available=False,
             status=ScannerRunStatus.UNAVAILABLE.value,
             error_message=sanitized_reason,
+            runner=runner,
         )
 
     # Precondition 4: Check runtime availability
@@ -160,6 +166,7 @@ async def run_mantis_advisory_analysis(
             available=False,
             status=ScannerRunStatus.FAILED.value,
             error_message=sanitized_msg,
+            runner=runner,
         )
 
     if not available:
@@ -189,6 +196,7 @@ async def run_mantis_advisory_analysis(
             available=False,
             status=ScannerRunStatus.UNAVAILABLE.value,
             error_message=sanitized_reason,
+            runner=runner,
         )
 
     # Execution record: mark RUNNING
@@ -234,6 +242,7 @@ async def run_mantis_advisory_analysis(
             status=ScannerRunStatus.FAILED.value,
             duration_seconds=duration,
             error_message=error_msg,
+            runner=runner,
         )
 
     duration = exec_result.duration_seconds
@@ -256,6 +265,7 @@ async def run_mantis_advisory_analysis(
 
     # Persist findings with strict advisory provenance
     persisted_findings: list[Finding] = []
+    candidates: list[MantisCorroborationCandidate] = []
     for nf in exec_result.normalized_findings:
         normalized_path = _normalize_file_path(nf.file_path, project_path, project_path)
 
@@ -283,6 +293,24 @@ async def run_mantis_advisory_analysis(
         )
         session.add(finding)
         await session.flush()
+
+        raw_meta_dict = nf.raw_data if isinstance(nf.raw_data, dict) else {}
+        m_status = str(raw_meta_dict.get("mantis_status") or "VALID").strip().upper()
+        m_explicit = bool(raw_meta_dict.get("mantis_status_explicit", False))
+
+        candidates.append(
+            MantisCorroborationCandidate(
+                finding_id=finding.id,
+                cwe=finding.cwe,
+                cve=finding.cve,
+                file_path=finding.file_path,
+                line_start=finding.line_start,
+                confidence=finding.confidence,
+                mantis_status=m_status,
+                mantis_status_explicit=m_explicit,
+                source_revision=pinned_rev,
+            )
+        )
 
         evidences_to_save = nf.evidences or ([nf.raw_data] if nf.raw_data else [])
         for ev_data in evidences_to_save:
@@ -314,4 +342,6 @@ async def run_mantis_advisory_analysis(
         summary=exec_result.summary,
         analysis=exec_result.analysis,
         duration_seconds=duration,
+        corroboration_candidates=candidates,
+        runner=runner,
     )

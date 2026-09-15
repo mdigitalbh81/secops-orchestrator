@@ -1585,6 +1585,7 @@ def cmd_mantis_status(args: argparse.Namespace) -> int:
         output = {
             "enabled": settings.mantis_enabled,
             "pipeline_enabled": settings.mantis_pipeline_enabled,
+            "gate_corroboration_enabled": settings.mantis_gate_corroboration_enabled,
             "execution_mode": settings.mantis_execution_mode,
             "configured_revision": settings.mantis_revision,
             "detected_revision": detected_revision,
@@ -1601,6 +1602,7 @@ def cmd_mantis_status(args: argparse.Namespace) -> int:
     print("Google Mantis Safe Analysis Runtime")
     print(f"  Enabled:              {'true' if settings.mantis_enabled else 'false'}")
     print(f"  Pipeline Enabled:     {'true' if settings.mantis_pipeline_enabled else 'false'}")
+    print(f"  Gate Corroboration:   {'true' if settings.mantis_gate_corroboration_enabled else 'false'}")
     print(f"  Execution Mode:       {settings.mantis_execution_mode}")
     print(f"  Available:            {'true' if available else 'false'}")
     print("  Bundled:              false")

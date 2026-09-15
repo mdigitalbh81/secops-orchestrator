@@ -57,6 +57,7 @@ def test_cli_mantis_status_human(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Google Mantis Safe Analysis Runtime" in captured.out
     assert "Enabled:" in captured.out
     assert "Pipeline Enabled:" in captured.out
+    assert "Gate Corroboration:" in captured.out
     assert "Safe Capabilities:" in captured.out
     assert "Blocked Capabilities:" in captured.out
     assert "reproduce, chain, patch" in captured.out
@@ -70,11 +71,24 @@ def test_cli_mantis_status_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert isinstance(data, dict)
     assert "enabled" in data
     assert "pipeline_enabled" in data
+    assert "gate_corroboration_enabled" in data
+    assert data["gate_corroboration_enabled"] is False
     assert "safe_capabilities" in data
     assert "blocked_capabilities" in data
     assert data["blocked_capabilities"] == ["reproduce", "chain", "patch"]
     assert "architecture" in data["safe_capabilities"]
     assert data["bundled"] is False
+
+
+def test_cli_mantis_status_corroboration_enabled(capsys: pytest.CaptureFixture[str]) -> None:
+    override_settings(Settings(mantis_gate_corroboration_enabled=True))
+    try:
+        code = main(["mantis", "status", "--json"])
+        assert code == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["gate_corroboration_enabled"] is True
+    finally:
+        override_settings(Settings())
 
 
 def test_cli_mantis_analyze_dry_run_human(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

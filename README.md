@@ -441,12 +441,13 @@ When enabled, Google Mantis safe analysis runs as an opt-in **advisory stage** i
 - **Fail-Open Isolation**: Provider timeouts, schema errors, HTTP errors (401/429/500), or runtime validation errors never fail the main scan or alter the deterministic Risk Gate. An audit record is created in `ScannerRun` (`scanner_name = "mantis-advisory-review"`).
 
 Configuration example:
-```bash
-SECOPS_MANTIS_ENABLED=true
-SECOPS_MANTIS_PIPELINE_ENABLED=true
-SECOPS_MANTIS_EXECUTION_MODE=read_only
-SECOPS_MANTIS_ROOT=/home/felps/tools/mantis
-SECOPS_MANTIS_REVISION=d13c93fb8e9779801711daea0d65fffa133c3b2d
+ ```bash
+ SECOPS_MANTIS_ENABLED=true
+ SECOPS_MANTIS_PIPELINE_ENABLED=true
+ SECOPS_MANTIS_GATE_CORROBORATION_ENABLED=false
+ SECOPS_MANTIS_EXECUTION_MODE=read_only
+ SECOPS_MANTIS_ROOT=/absolute/path/to/mantis
+ SECOPS_MANTIS_REVISION=d13c93fb8e9779801711daea0d65fffa133c3b2d
 SECOPS_MANTIS_BASE_URL=https://api.openai.com/v1
 SECOPS_MANTIS_API_KEY=your-api-key-here
 SECOPS_MANTIS_MODEL=gpt-4o
@@ -462,8 +463,26 @@ docker compose \
   up -d --force-recreate worker
 ```
 
-- **HOST**: `SECOPS_MANTIS_ROOT` specifies the host checkout path (e.g., `/home/felps/tools/mantis`).
+- **HOST**: `SECOPS_MANTIS_ROOT` specifies the host checkout path (e.g., `/absolute/path/to/mantis`).
 - **WORKER**: The directory is mounted read-only to `/opt/secops-mantis`, with `SECOPS_MANTIS_ROOT=/opt/secops-mantis` inside the worker container.
+
+---
+
+### Google Mantis Corroboration Policy (Risk Gate)
+
+When opt-in corroboration is enabled (`SECOPS_MANTIS_GATE_CORROBORATION_ENABLED=true`), Google Mantis advisory findings can corroborate eligible deterministic findings under conservative, deterministic matching rules:
+
+- **Default**: `SECOPS_MANTIS_GATE_CORROBORATION_ENABLED=false`. All prerequisite flags (`SECOPS_MANTIS_ENABLED=true`, `SECOPS_MANTIS_PIPELINE_ENABLED=true`, `SECOPS_MANTIS_EXECUTION_MODE=read_only`) must be set.
+- **Advisory Invariant**: Mantis findings remain strictly advisory (`SINGLE_SOURCE`, `risk_gate_eligible = False`). Mantis findings **never** directly enter `compute_risk_gate()`.
+- **Deterministic Promotion**: Only existing deterministic findings (`semgrep`, `codeql`, `trivy`, `npm-audit`, `pip-audit`) with status `OPEN`, evidence level `SINGLE_SOURCE`, and confidence >= 0.50 are eligible to be promoted from `SINGLE_SOURCE` to `CORROBORATED_STATIC`.
+- **Explicit Verdict**: Only Mantis findings with explicit verdict `VALID` (`mantis_status_explicit=True`) and confidence >= 0.50 can corroborate. Omitted status defaults are rejected.
+- **Strict Structural Matching**: Matching requires exact normalized file path, line distance <= 5, and exact normalized CWE or CVE identifier.
+- **No Semantic or Fuzzy Matching**: No semantic similarity, title similarity, embeddings, or LLM-based matching are used.
+- **Excluded Tools**: Agentic/LLM sources (`ai-appsec`, `mantis`) and DAST tools (`zap`, `nuclei`) cannot be corroborated. In particular, `ai-appsec` cannot be independently corroborated by Mantis.
+- **Ambiguity Rejection**: Any Mantis candidate matching multiple deterministic findings promotes none (unambiguous one-to-one required).
+- **Authoritative Severity & Confidence**: Deterministic severity and confidence are never modified or boosted by Mantis.
+- **No Runtime Validation**: Mantis claims of "verified", "reproduced", or "exploited" never produce `RUNTIME_VALIDATED`.
+- **Blocked Capabilities**: `reproduce`, `chain`, and `patch` remain 100% blocked.
 
 ---
 

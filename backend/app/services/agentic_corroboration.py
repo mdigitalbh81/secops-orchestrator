@@ -49,6 +49,17 @@ class MantisCorroborationCandidate:
     source_revision: str | None = None
 
 
+@dataclass(frozen=True)
+class CorroborationDecision:
+    """Internal planned decision for corroborating a deterministic finding."""
+
+    target: Any
+    candidate: MantisCorroborationCandidate
+    match_rule: str | None
+    line_distance: int | None
+    evidence_payload: dict[str, Any]
+
+
 @dataclass
 class CorroborationResult:
     """Summary outcome of applying Mantis corroboration policy."""
@@ -137,19 +148,17 @@ def _matches_structural(
     return False, None, None
 
 
-def apply_mantis_corroboration(
+def evaluate_mantis_corroboration(
     deterministic_findings: list[Any],
-    correlation_groups: list[Any] | None = None,
     candidates: list[MantisCorroborationCandidate] | None = None,
-) -> CorroborationResult:
-    """Evaluate and apply Mantis static corroboration policy.
+) -> tuple[list[CorroborationDecision], int]:
+    """FASE 1 - EVALUATION / PLANNING: Evaluate candidates and deterministic findings.
 
-    Promotes eligible SINGLE_SOURCE deterministic findings to CORROBORATED_STATIC
-    and synchronizes corresponding correlation groups.
-    Never alters finding severity, confidence, or other metadata.
+    Calculates matches, rejects ambiguities, and constructs promotion decisions
+    WITHOUT mutating evidence_level, evidences, or correlation groups.
     """
     if not deterministic_findings or not candidates:
-        return CorroborationResult()
+        return [], 0
 
     # Filter eligible candidates: explicit VALID, confidence >= 0.50
     eligible_candidates: list[MantisCorroborationCandidate] = []
@@ -162,7 +171,7 @@ def apply_mantis_corroboration(
             eligible_candidates.append(c)
 
     if not eligible_candidates:
-        return CorroborationResult()
+        return [], 0
 
     # Filter eligible deterministic findings:
     # scanner in allowlist, status == OPEN, evidence_level == SINGLE_SOURCE, confidence >= 0.50
@@ -222,10 +231,10 @@ def apply_mantis_corroboration(
         eligible_deterministic.append(f)
 
     if not eligible_deterministic:
-        return CorroborationResult()
+        return [], 0
 
-    promoted_findings: list[Any] = []
-    promoted_keys: set[tuple[str, str]] = set()
+    decisions: list[CorroborationDecision] = []
+    planned_keys: set[tuple[str, str]] = set()
     ambiguous_count = 0
 
     # Match each eligible candidate against eligible deterministic findings
@@ -253,15 +262,11 @@ def apply_mantis_corroboration(
         )
 
         # Idempotence / deduplication: promote at most once
-        if fp_key in promoted_keys:
+        if fp_key in planned_keys:
             continue
 
         _, match_rule, line_dist = _matches_structural(target, cand)
 
-        # Apply promotion
-        target.evidence_level = EvidenceLevel.CORROBORATED_STATIC
-
-        # Build sanitized audit evidence
         evidence_payload: dict[str, Any] = {
             "source_agent": "mantis",
             "policy_version": POLICY_VERSION,
@@ -276,21 +281,57 @@ def apply_mantis_corroboration(
             "source_revision": cand.source_revision,
         }
 
+        decisions.append(
+            CorroborationDecision(
+                target=target,
+                candidate=cand,
+                match_rule=match_rule,
+                line_distance=line_dist,
+                evidence_payload=evidence_payload,
+            )
+        )
+        planned_keys.add(fp_key)
+
+    return decisions, ambiguous_count
+
+
+def apply_mantis_corroboration(
+    deterministic_findings: list[Any],
+    correlation_groups: list[Any] | None = None,
+    candidates: list[MantisCorroborationCandidate] | None = None,
+) -> CorroborationResult:
+    """Evaluate and apply Mantis static corroboration policy.
+
+    Phase 1: Evaluation / Planning (all-or-nothing, zero mutations).
+    Phase 2: Apply promotions and sync correlation groups only after successful evaluation.
+    """
+    if not deterministic_findings or not candidates:
+        return CorroborationResult()
+
+    decisions, ambiguous_count = evaluate_mantis_corroboration(
+        deterministic_findings=deterministic_findings,
+        candidates=candidates,
+    )
+
+    # FASE 2 - APPLY (only after all evaluation completes with success)
+    promoted_findings: list[Any] = []
+    for decision in decisions:
+        target = decision.target
+        target.evidence_level = EvidenceLevel.CORROBORATED_STATIC
         if hasattr(target, "__tablename__") and target.__tablename__ == "findings":
             from app.models.finding import FindingEvidence
 
             ev_obj = FindingEvidence(
                 finding_id=getattr(target, "id", ""),
                 scanner_name="mantis",
-                raw_data=evidence_payload,
+                raw_data=decision.evidence_payload,
             )
             target.evidences.append(ev_obj)
         else:
             if getattr(target, "evidences", None) is None:
                 target.evidences = []
-            target.evidences.append(evidence_payload)
+            target.evidences.append(decision.evidence_payload)
 
-        promoted_keys.add(fp_key)
         promoted_findings.append(target)
 
     # Synchronize correlation groups (Section 37)

@@ -377,11 +377,18 @@ async def run_scan(scan_id: str, session: AsyncSession) -> None:
             and mantis_result is not None
             and mantis_result.corroboration_candidates
         ):
-            corroboration_res = apply_mantis_corroboration(
-                deterministic_findings=deduped,
-                correlation_groups=correlation_groups,
-                candidates=mantis_result.corroboration_candidates,
-            )
+            corroboration_res = None
+            try:
+                corroboration_res = apply_mantis_corroboration(
+                    deterministic_findings=deduped,
+                    correlation_groups=correlation_groups,
+                    candidates=mantis_result.corroboration_candidates,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Mantis corroboration policy failed: %s", exc.__class__.__name__
+                )
+                corroboration_res = None
             if mantis_result.runner is not None and corroboration_res:
                 try:
                     raw_meta = json.loads(mantis_result.runner.raw_output or "{}")

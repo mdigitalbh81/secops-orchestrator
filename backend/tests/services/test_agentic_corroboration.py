@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from app.models.enums import EvidenceLevel, FindingStatus, Severity
 from app.scanners.base import NormalizedFinding
 from app.services.agentic_corroboration import (
     POLICY_VERSION,
+    CorroborationDecision,
     MantisCorroborationCandidate,
     apply_mantis_corroboration,
+    evaluate_mantis_corroboration,
     normalize_cve,
     normalize_cwe,
     normalize_path,
@@ -150,6 +154,7 @@ def test_default_omitted_valid_rejected() -> None:
         "PROVISIONALLY_VALID",
         "NEEDS_RESEARCH",
         "FALSE_POSITIVE",
+        "FP",
         "DUPLICATE",
         "UNKNOWN",
         "",
@@ -438,3 +443,88 @@ def test_deterministic_severity_authoritative() -> None:
     assert res.promotions_count == 1
     assert det_high.severity == Severity.HIGH
     assert det_high.evidence_level == EvidenceLevel.CORROBORATED_STATIC
+
+
+# ------------------------------------------------------------------
+# Mutation Atomicity (Section 6)
+# ------------------------------------------------------------------
+def test_evaluation_phase_does_not_mutate() -> None:
+    """FASE 1 evaluation must never mutate findings or correlation groups."""
+    det1 = _make_deterministic(line_start=100, fingerprint="fp_1")
+    det2 = _make_deterministic(line_start=200, fingerprint="fp_2")
+    cand1 = _make_mantis_candidate(line_start=102)
+    cand2 = _make_mantis_candidate(line_start=202)
+    cg = CorrelationGroupResult(
+        id="grp-1",
+        scan_id="scan-1",
+        canonical_title="Group Title",
+        canonical_cwe="CWE-79",
+        canonical_cve=None,
+        severity=Severity.HIGH,
+        confidence=0.55,
+        evidence_level=EvidenceLevel.SINGLE_SOURCE,
+        status=FindingStatus.OPEN,
+        remediation_recommendation=None,
+        findings=[det1, det2],
+    )
+
+    decisions, ambiguous_count = evaluate_mantis_corroboration(
+        [det1, det2], [cand1, cand2]
+    )
+    assert len(decisions) == 2
+    assert all(isinstance(d, CorroborationDecision) for d in decisions)
+    assert ambiguous_count == 0
+    # Both remain SINGLE_SOURCE
+    assert det1.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert det2.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    # No policy evidence added
+    assert len(det1.evidences) == 0
+    assert len(det2.evidences) == 0
+    # Groups unaltered
+    assert cg.evidence_level == EvidenceLevel.SINGLE_SOURCE
+
+
+def test_failure_during_evaluation_leaves_zero_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure during evaluation phase must leave zero mutations across all findings."""
+    import app.services.agentic_corroboration as ac_mod
+
+    det1 = _make_deterministic(line_start=100, fingerprint="fp_1")
+    det2 = _make_deterministic(line_start=200, fingerprint="fp_2")
+    cand1 = _make_mantis_candidate(line_start=102)
+    cand2 = _make_mantis_candidate(line_start=202)
+    cg = CorrelationGroupResult(
+        id="grp-1",
+        scan_id="scan-1",
+        canonical_title="Group Title",
+        canonical_cwe="CWE-79",
+        canonical_cve=None,
+        severity=Severity.HIGH,
+        confidence=0.55,
+        evidence_level=EvidenceLevel.SINGLE_SOURCE,
+        status=FindingStatus.OPEN,
+        remediation_recommendation=None,
+        findings=[det1, det2],
+    )
+
+    orig_matches = ac_mod._matches_structural
+
+    def fail_on_cand2(d: Any, c: Any) -> tuple[bool, str | None, int | None]:
+        if c.line_start == 202:
+            raise RuntimeError("synthetic evaluation failure on candidate 2")
+        return orig_matches(d, c)
+
+    monkeypatch.setattr(ac_mod, "_matches_structural", fail_on_cand2)
+
+    with pytest.raises(RuntimeError, match="synthetic evaluation failure on candidate 2"):
+        apply_mantis_corroboration(
+            [det1, det2], correlation_groups=[cg], candidates=[cand1, cand2]
+        )
+
+    # Neither finding is promoted; both remain SINGLE_SOURCE (no partial mutation)
+    assert det1.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert det2.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert len(det1.evidences) == 0
+    assert len(det2.evidences) == 0
+    assert cg.evidence_level == EvidenceLevel.SINGLE_SOURCE

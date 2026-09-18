@@ -1068,6 +1068,155 @@ async def test_orchestrator_mantis_corroboration_policy_fail_open(
     assert semgrep_f.evidence_level == EvidenceLevel.SINGLE_SOURCE
 
 
+async def test_orchestrator_mantis_corroboration_apply_failure_fail_open(
+    db_session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    """Defensive fail-open when exception occurs inside apply_mantis_corroboration APPLY phase.
+
+    Evaluation succeeds, but an exception is raised after entering the APPLY phase.
+    apply_mantis_corroboration rolls back in-memory mutations.
+    Orchestrator catches the error, completes scan with deterministic REVIEW,
+    and persists Semgrep and Mantis findings as SINGLE_SOURCE (zero partial promotion).
+    """
+    proj_dir = tmp_path / "corrob_apply_fail_open_project"
+    proj_dir.mkdir()
+    (proj_dir / "app").mkdir()
+    (proj_dir / "app" / "views.py").write_text("def render_user(req):\n    return req.name\n")
+
+    project = Project(name="Apply Fail Open Project")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(project_id=project.id, source_path=str(proj_dir))
+    db_session.add(scan)
+    await db_session.commit()
+
+    semgrep_output = json.dumps(
+        {
+            "results": [
+                {
+                    "check_id": "rules.views.xss",
+                    "path": "app/views.py",
+                    "start": {"line": 100, "col": 5},
+                    "end": {"line": 100, "col": 20},
+                    "extra": {
+                        "message": "Reflected XSS in view",
+                        "severity": "ERROR",
+                        "metadata": {"cwe": ["CWE-79"]},
+                    },
+                }
+            ]
+        }
+    )
+
+    mantis_raw = [
+        {
+            "id": "mantis-xss-100",
+            "title": "Reflected XSS in render_user",
+            "description": "User input directly rendered",
+            "severity": "HIGH",
+            "confidence": 0.55,
+            "cwe": "CWE-79",
+            "file_path": "app/views.py",
+            "line_start": 103,
+            "line_end": 103,
+            "mantis_status": "VALID",
+            "mantis_status_explicit": True,
+        }
+    ]
+
+    adapter = MantisAdapter()
+    norm_mantis = adapter.ingest_findings(mantis_raw)
+
+    mock_mantis_res = MantisExecutionResult(
+        capability=AgentCapability.REVIEW,
+        summary="Found valid XSS matching view",
+        analysis="Detailed XSS analysis",
+        raw_findings=mantis_raw,
+        normalized_findings=norm_mantis,
+        metadata={"mantis_revision": "d13c93fb8e9779801711daea0d65fffa133c3b2d"},
+        duration_seconds=1.2,
+    )
+
+    settings = Settings(
+        mantis_enabled=True,
+        mantis_pipeline_enabled=True,
+        mantis_gate_corroboration_enabled=True,
+        mantis_execution_mode="read_only",
+        mantis_root=tmp_path,
+        allowed_workspace_root=tmp_path,
+        mantis_revision="d13c93fb8e9779801711daea0d65fffa133c3b2d",
+        mantis_base_url="https://api.openai.com/v1",
+        mantis_api_key="test-key",
+    )
+
+    async def mock_run_command(argv, cwd=None, config=None):
+        tool = argv[0]
+        if "--version" in argv:
+            return RunResult(return_code=0, stdout="1.0.0", stderr="")
+        if tool == "semgrep":
+            return RunResult(return_code=0, stdout=semgrep_output, stderr="")
+        if tool in ("pip-audit", "trivy", "npm"):
+            return RunResult(return_code=0, stdout="{}", stderr="")
+        return RunResult(return_code=-1, stdout="", stderr="Unknown tool")
+
+    with (
+        patch("app.services.orchestrator.get_settings", return_value=settings),
+        patch("app.services.mantis_advisory.get_settings", return_value=settings),
+        patch("app.scanners.base.run_command", side_effect=mock_run_command),
+        patch("app.scanners.semgrep.run_command", side_effect=mock_run_command),
+        patch("app.scanners.pip_audit.run_command", side_effect=mock_run_command),
+        patch("app.scanners.trivy.run_command", side_effect=mock_run_command),
+        patch.object(MantisSafeRuntime, "check_availability", return_value=(True, "available")),
+        patch.object(MantisSafeRuntime, "analyze", new_callable=AsyncMock, return_value=mock_mantis_res),
+        patch(
+            "app.services.agentic_corroboration._attach_corroboration_evidence",
+            side_effect=RuntimeError("synthetic apply failure"),
+        ),
+    ):
+        await run_scan(scan.id, db_session)
+
+    await db_session.refresh(scan)
+    assert scan.status == ScanStatus.COMPLETED
+    assert scan.risk_gate == RiskGate.REVIEW
+
+    findings = (
+        await db_session.execute(select(Finding).where(Finding.scan_id == scan.id))
+    ).scalars().all()
+    semgrep_f = next(f for f in findings if f.scanner_name == "semgrep")
+    mantis_f = next(f for f in findings if f.scanner_name == "mantis")
+
+    # Deterministic Semgrep persisted normally as SINGLE_SOURCE
+    assert semgrep_f.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert semgrep_f.severity == Severity.HIGH
+    assert semgrep_f.confidence >= 0.50
+    assert semgrep_f.risk_gate_eligible is True
+    assert semgrep_f.advisory is False
+
+    # Mantis remains SINGLE_SOURCE advisory
+    assert mantis_f.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert mantis_f.risk_gate_eligible is False
+    assert mantis_f.advisory is True
+    assert mantis_f.correlation_group_id is None
+
+    # No Mantis corroboration evidence persisted for Semgrep finding
+    evidences = (
+        await db_session.execute(
+            select(FindingEvidence).where(FindingEvidence.finding_id == semgrep_f.id)
+        )
+    ).scalars().all()
+    assert not any(e.scanner_name == "mantis" for e in evidences)
+
+    # Correlation group remains SINGLE_SOURCE
+    cg = (
+        await db_session.execute(
+            select(CorrelationGroup).where(CorrelationGroup.scan_id == scan.id)
+        )
+    ).scalar_one()
+    assert cg.evidence_level == EvidenceLevel.SINGLE_SOURCE
+
+
 async def test_orchestrator_mantis_corroboration_negative_pipeline_disabled(
     db_session: AsyncSession,
     tmp_path: Path,

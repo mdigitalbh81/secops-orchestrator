@@ -528,3 +528,124 @@ def test_failure_during_evaluation_leaves_zero_mutations(
     assert len(det1.evidences) == 0
     assert len(det2.evidences) == 0
     assert cg.evidence_level == EvidenceLevel.SINGLE_SOURCE
+
+
+def test_failure_during_apply_leaves_zero_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure during apply phase must rollback all mutations across findings and groups."""
+    import app.services.agentic_corroboration as ac_mod
+
+    det1 = _make_deterministic(line_start=100, fingerprint="fp_1")
+    det2 = _make_deterministic(line_start=200, fingerprint="fp_2")
+    cand1 = _make_mantis_candidate(line_start=102)
+    cand2 = _make_mantis_candidate(line_start=202)
+
+    cg = CorrelationGroupResult(
+        id="grp-1",
+        scan_id="scan-1",
+        canonical_title="Group Title",
+        canonical_cwe="CWE-79",
+        canonical_cve=None,
+        severity=Severity.HIGH,
+        confidence=0.55,
+        evidence_level=EvidenceLevel.SINGLE_SOURCE,
+        status=FindingStatus.OPEN,
+        remediation_recommendation=None,
+        findings=[det1, det2],
+    )
+
+    decisions, ambiguous_count = evaluate_mantis_corroboration(
+        [det1, det2],
+        [cand1, cand2],
+    )
+    assert len(decisions) == 2
+    assert ambiguous_count == 0
+
+    orig_attach = ac_mod._attach_corroboration_evidence
+
+    def fail_on_det2(target: Any, payload: dict[str, Any]) -> Any:
+        if getattr(target, "normalized_fingerprint", None) == "fp_2":
+            raise RuntimeError("synthetic apply failure on candidate 2")
+        return orig_attach(target, payload)
+
+    monkeypatch.setattr(ac_mod, "_attach_corroboration_evidence", fail_on_det2)
+
+    with pytest.raises(RuntimeError, match="synthetic apply failure on candidate 2"):
+        apply_mantis_corroboration(
+            [det1, det2],
+            correlation_groups=[cg],
+            candidates=[cand1, cand2],
+        )
+
+    assert det1.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert det2.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert not any(
+        (isinstance(e, dict) and e.get("policy_version") == POLICY_VERSION)
+        for e in det1.evidences
+    )
+    assert not any(
+        (isinstance(e, dict) and e.get("policy_version") == POLICY_VERSION)
+        for e in det2.evidences
+    )
+    assert len(det1.evidences) == 0
+    assert len(det2.evidences) == 0
+    assert cg.evidence_level == EvidenceLevel.SINGLE_SOURCE
+
+
+def test_failure_during_apply_orm_finding_leaves_zero_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure during apply phase must safely remove added FindingEvidence from ORM models."""
+    import app.services.agentic_corroboration as ac_mod
+    from app.models.finding import Finding
+
+    f1 = Finding(
+        id="f1",
+        scan_id="scan-1",
+        scanner_name="semgrep",
+        title="Finding 1",
+        cwe="CWE-79",
+        file_path="app/views.py",
+        line_start=100,
+        severity=Severity.HIGH,
+        confidence=0.55,
+        status=FindingStatus.OPEN,
+        evidence_level=EvidenceLevel.SINGLE_SOURCE,
+        raw_fingerprint="fp1",
+        normalized_fingerprint="fp1",
+    )
+    f2 = Finding(
+        id="f2",
+        scan_id="scan-1",
+        scanner_name="semgrep",
+        title="Finding 2",
+        cwe="CWE-79",
+        file_path="app/views.py",
+        line_start=200,
+        severity=Severity.HIGH,
+        confidence=0.55,
+        status=FindingStatus.OPEN,
+        evidence_level=EvidenceLevel.SINGLE_SOURCE,
+        raw_fingerprint="fp2",
+        normalized_fingerprint="fp2",
+    )
+    cand1 = _make_mantis_candidate(line_start=102)
+    cand2 = _make_mantis_candidate(line_start=202)
+
+    orig_attach = ac_mod._attach_corroboration_evidence
+
+    def fail_on_f2(target: Any, payload: dict[str, Any]) -> Any:
+        if getattr(target, "normalized_fingerprint", None) == "fp2":
+            raise RuntimeError("synthetic apply failure on f2")
+        return orig_attach(target, payload)
+
+    monkeypatch.setattr(ac_mod, "_attach_corroboration_evidence", fail_on_f2)
+
+    with pytest.raises(RuntimeError, match="synthetic apply failure on f2"):
+        apply_mantis_corroboration([f1, f2], candidates=[cand1, cand2])
+
+    assert f1.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert f2.evidence_level == EvidenceLevel.SINGLE_SOURCE
+    assert len(f1.evidences) == 0
+    assert len(f2.evidences) == 0

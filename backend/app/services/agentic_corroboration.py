@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -295,6 +296,29 @@ def evaluate_mantis_corroboration(
     return decisions, ambiguous_count
 
 
+def _attach_corroboration_evidence(
+    target: Any,
+    payload: dict[str, Any],
+) -> Any:
+    """Attach corroboration evidence to target finding (ORM model or NormalizedFinding)."""
+    if (hasattr(target, "__tablename__") and target.__tablename__ == "findings") or hasattr(
+        target, "_sa_instance_state"
+    ):
+        from app.models.finding import FindingEvidence
+
+        ev_obj = FindingEvidence(
+            finding_id=getattr(target, "id", ""),
+            scanner_name="mantis",
+            raw_data=payload,
+        )
+        target.evidences.append(ev_obj)
+        return ev_obj
+    if getattr(target, "evidences", None) is None:
+        target.evidences = []
+    target.evidences.append(payload)
+    return payload
+
+
 def apply_mantis_corroboration(
     deterministic_findings: list[Any],
     correlation_groups: list[Any] | None = None,
@@ -303,7 +327,7 @@ def apply_mantis_corroboration(
     """Evaluate and apply Mantis static corroboration policy.
 
     Phase 1: Evaluation / Planning (all-or-nothing, zero mutations).
-    Phase 2: Apply promotions and sync correlation groups only after successful evaluation.
+    Phase 2: Apply promotions and sync correlation groups with all-or-nothing rollback.
     """
     if not deterministic_findings or not candidates:
         return CorroborationResult()
@@ -313,40 +337,95 @@ def apply_mantis_corroboration(
         candidates=candidates,
     )
 
-    # FASE 2 - APPLY (only after all evaluation completes with success)
-    promoted_findings: list[Any] = []
+    if not decisions:
+        return CorroborationResult(
+            promotions_count=0,
+            ambiguous_count=ambiguous_count,
+            promoted_findings=[],
+        )
+
+    # FASE 2 - APPLY (with in-memory all-or-nothing rollback)
+    target_snapshots: dict[int, dict[str, Any]] = {}
     for decision in decisions:
         target = decision.target
-        target.evidence_level = EvidenceLevel.CORROBORATED_STATIC
-        if hasattr(target, "__tablename__") and target.__tablename__ == "findings":
-            from app.models.finding import FindingEvidence
+        t_id = id(target)
+        if t_id not in target_snapshots:
+            is_orm = (
+                hasattr(target, "__tablename__") and target.__tablename__ == "findings"
+            ) or hasattr(target, "_sa_instance_state")
+            ev = getattr(target, "evidences", None)
+            target_snapshots[t_id] = {
+                "target": target,
+                "evidence_level": getattr(target, "evidence_level", None),
+                "is_orm": is_orm,
+                "orig_evidences": list(ev) if ev is not None and not is_orm else None,
+                "evidences_is_none": ev is None,
+            }
 
-            ev_obj = FindingEvidence(
-                finding_id=getattr(target, "id", ""),
-                scanner_name="mantis",
-                raw_data=decision.evidence_payload,
-            )
-            target.evidences.append(ev_obj)
-        else:
-            if getattr(target, "evidences", None) is None:
-                target.evidences = []
-            target.evidences.append(decision.evidence_payload)
-
-        promoted_findings.append(target)
-
-    # Synchronize correlation groups (Section 37)
-    if correlation_groups and promoted_findings:
-        promoted_ids = {id(f) for f in promoted_findings}
+    group_snapshots: dict[int, tuple[Any, Any]] = {}
+    if correlation_groups:
         for cg in correlation_groups:
-            cg_findings = getattr(cg, "findings", []) or []
-            if (
-                any(id(f) in promoted_ids for f in cg_findings)
-                and cg.evidence_level != EvidenceLevel.RUNTIME_VALIDATED
-            ):
-                cg.evidence_level = EvidenceLevel.CORROBORATED_STATIC
+            group_snapshots[id(cg)] = (cg, getattr(cg, "evidence_level", None))
 
-    return CorroborationResult(
-        promotions_count=len(promoted_findings),
-        ambiguous_count=ambiguous_count,
-        promoted_findings=promoted_findings,
-    )
+    added_orm_evidences: list[tuple[Any, Any]] = []
+
+    try:
+        promoted_findings: list[Any] = []
+        for decision in decisions:
+            target = decision.target
+            target.evidence_level = EvidenceLevel.CORROBORATED_STATIC
+            attached = _attach_corroboration_evidence(target, decision.evidence_payload)
+            if (
+                hasattr(target, "__tablename__") and target.__tablename__ == "findings"
+            ) or hasattr(target, "_sa_instance_state"):
+                added_orm_evidences.append((target, attached))
+            promoted_findings.append(target)
+
+        # Synchronize correlation groups (Section 37)
+        if correlation_groups and promoted_findings:
+            promoted_ids = {id(f) for f in promoted_findings}
+            for cg in correlation_groups:
+                cg_findings = getattr(cg, "findings", []) or []
+                if (
+                    any(id(f) in promoted_ids for f in cg_findings)
+                    and cg.evidence_level != EvidenceLevel.RUNTIME_VALIDATED
+                ):
+                    cg.evidence_level = EvidenceLevel.CORROBORATED_STATIC
+
+        return CorroborationResult(
+            promotions_count=len(promoted_findings),
+            ambiguous_count=ambiguous_count,
+            promoted_findings=promoted_findings,
+        )
+    except Exception:
+        for snap in target_snapshots.values():
+            tgt = snap["target"]
+            tgt.evidence_level = snap["evidence_level"]
+            if not snap["is_orm"]:
+                if snap["evidences_is_none"]:
+                    tgt.evidences = None
+                elif isinstance(getattr(tgt, "evidences", None), list):
+                    tgt.evidences.clear()
+                    if snap["orig_evidences"] is not None:
+                        tgt.evidences.extend(snap["orig_evidences"])
+                else:
+                    tgt.evidences = (
+                        list(snap["orig_evidences"])
+                        if snap["orig_evidences"] is not None
+                        else None
+                    )
+
+        for tgt, ev_obj in reversed(added_orm_evidences):
+            if hasattr(tgt, "evidences") and ev_obj in tgt.evidences:
+                tgt.evidences.remove(ev_obj)
+            with suppress(Exception):
+                from sqlalchemy.orm import object_session
+
+                s = object_session(ev_obj)
+                if s is not None:
+                    s.expunge(ev_obj)
+
+        for cg, orig_level in group_snapshots.values():
+            cg.evidence_level = orig_level
+
+        raise

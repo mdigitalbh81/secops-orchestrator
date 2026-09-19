@@ -479,3 +479,29 @@ def test_mantis_ingest_duplicate_standalone_with_missing_primary_stays_open() ->
     assert f.raw_data["mantis_status"] == "DUPLICATE"
     assert f.raw_data["is_duplicate"] is True
     assert f.raw_data["duplicate_of"] == "never-existed-id"
+
+
+def test_mantis_status_explicit_flag() -> None:
+    """Verify provenance marks status explicit vs defaulted."""
+    adapter = MantisAdapter()
+
+    # Explicit status
+    explicit_sample = {
+        "title": "SQL Injection",
+        "status": "VALID",
+        "file_path": "app/db.py",
+    }
+    res = adapter.ingest_findings(explicit_sample)
+    assert len(res) == 1
+    assert res[0].raw_data["mantis_status"] == "VALID"
+    assert res[0].raw_data["mantis_status_explicit"] is True
+
+    # Omitted status: defaults to VALID, but mantis_status_explicit is False
+    omitted_sample = {
+        "title": "SQL Injection",
+        "file_path": "app/db.py",
+    }
+    res2 = adapter.ingest_findings(omitted_sample)
+    assert len(res2) == 1
+    assert res2[0].raw_data["mantis_status"] == "VALID"
+    assert res2[0].raw_data["mantis_status_explicit"] is False

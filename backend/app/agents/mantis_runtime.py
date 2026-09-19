@@ -138,7 +138,7 @@ class MantisSafeAnalysisFinding(BaseModel):
     file_path: str | None = None
     line_start: int | None = None
     line_end: int | None = None
-    mantis_status: str | None = "VALID"
+    mantis_status: str | None = None
     repro_status: str | None = None
 
 

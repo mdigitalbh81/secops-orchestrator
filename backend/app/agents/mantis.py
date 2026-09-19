@@ -276,12 +276,15 @@ class MantisAdapter(AgenticSecurityAdapter):
             file_path, line_start, line_end = self._parse_code_path(first_path)
 
         # Mantis status mapping
-        raw_status = str(
+        raw_status_val = (
             item.get("mantis_status")
             or item.get("status")
             or item.get("disposition")
-            or "VALID"
-        ).strip().upper()
+        )
+        mantis_status_explicit = bool(
+            raw_status_val is not None and str(raw_status_val).strip() != ""
+        )
+        raw_status = str(raw_status_val or "VALID").strip().upper()
 
         # Agent verdicts are metadata/provenance only; they never create
         # SecOps dispositions automatically.  All findings start OPEN.
@@ -310,6 +313,7 @@ class MantisAdapter(AgenticSecurityAdapter):
             "source_agent": self.name,
             "source_revision": self.revision,
             "mantis_status": raw_status,
+            "mantis_status_explicit": mantis_status_explicit,
             "raw_finding": item,
         }
         if item.get("duplicate_of"):

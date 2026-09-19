@@ -33,6 +33,7 @@ from app.models.finding import Finding
 from app.models.project import Project
 from app.models.scan import Scan
 from app.models.scanner_run import ScannerRun
+from app.scanners.base import NormalizedFinding
 from app.schemas.finding import FindingResponse
 from app.security.runner import RunResult
 from app.services.mantis_advisory import run_mantis_advisory_analysis
@@ -1167,3 +1168,75 @@ async def test_pipeline_check_availability_exception_audited(
     assert raw_meta["advisory"] is True
     assert raw_meta["risk_gate_eligible"] is False
     assert raw_meta["error_class"] == "RuntimeError"
+
+
+async def test_mantis_advisory_generates_corroboration_candidates(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """Verify MantisAdvisoryResult produces typed corroboration candidates."""
+    proj_dir = tmp_path / "cand_project"
+    proj_dir.mkdir()
+    (proj_dir / "main.py").write_text("print('hello')")
+
+    project = Project(name="Cand Project")
+    db_session.add(project)
+    await db_session.flush()
+
+    scan = Scan(project_id=project.id, source_path=str(proj_dir))
+    db_session.add(scan)
+    await db_session.commit()
+
+    settings = Settings(
+        mantis_enabled=True,
+        mantis_pipeline_enabled=True,
+        mantis_execution_mode="read_only",
+        mantis_root=tmp_path,
+        mantis_revision="d13c93fb8e9779801711daea0d65fffa133c3b2d",
+        mantis_base_url="https://api.openai.com/v1",
+        mantis_api_key="test-key",
+    )
+
+    norm = NormalizedFinding(
+        title="XSS",
+        description="Cross site scripting",
+        severity=Severity.HIGH,
+        confidence=0.55,
+        scanner_name="mantis",
+        cwe="CWE-79",
+        file_path="main.py",
+        line_start=10,
+        raw_fingerprint="fp1",
+        normalized_fingerprint="nfp1",
+        raw_data={"mantis_status": "VALID", "mantis_status_explicit": True},
+    )
+    exec_res = MantisExecutionResult(
+        capability=AgentCapability.REVIEW,
+        summary="ok",
+        analysis="details",
+        raw_findings=[{}],
+        normalized_findings=[norm],
+        duration_seconds=1.0,
+    )
+
+    with (
+        patch.object(MantisSafeRuntime, "check_availability", return_value=(True, "")),
+        patch.object(MantisSafeRuntime, "analyze", new_callable=AsyncMock, return_value=exec_res),
+    ):
+        res = await run_mantis_advisory_analysis(
+            scan=scan,
+            project_path=proj_dir,
+            session=db_session,
+            settings=settings,
+        )
+
+    assert res.attempted is True
+    assert res.available is True
+    assert len(res.corroboration_candidates) == 1
+    cand = res.corroboration_candidates[0]
+    assert cand.cwe == "CWE-79"
+    assert cand.file_path == "main.py"
+    assert cand.line_start == 10
+    assert cand.confidence == 0.55
+    assert cand.mantis_status == "VALID"
+    assert cand.mantis_status_explicit is True
+    assert cand.source_revision == settings.mantis_revision

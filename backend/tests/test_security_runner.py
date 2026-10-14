@@ -151,3 +151,51 @@ def test_run_command_sync_dangerous_rejected(tmp_path: Path) -> None:
             cwd=tmp_path,
             config=RunnerConfig(timeout=5, allowed_roots=[tmp_path]),
         )
+
+
+@pytest.mark.parametrize("runner", [run_command, run_command_sync])
+async def test_runner_bounded_large_output_and_safe_environment(runner, tmp_path: Path):
+    code = (
+        "import os,sys; "
+        "sys.stdout.write('A'*2000000); "
+        "sys.stderr.write('B'*2000000); "
+        "sys.stdout.write('SAFE='+str(os.getenv('LD_PRELOAD'))+'\\n')"
+    )
+    config = RunnerConfig(
+        timeout=10,
+        max_output_bytes=128,
+        allowed_roots=[tmp_path],
+        env_override={'LD_PRELOAD': '/tmp/unsafe.so', 'LD_LIBRARY_PATH': '/tmp/unsafe'},
+    )
+    if runner is run_command:
+        result = await runner([sys.executable, '-c', code], cwd=tmp_path, config=config)
+    else:
+        result = runner([sys.executable, '-c', code], cwd=tmp_path, config=config)
+    assert result.return_code == 0
+    assert result.stdout == 'A' * 128
+    assert result.stderr == 'B' * 128
+
+
+@pytest.mark.parametrize('runner', [run_command, run_command_sync])
+async def test_runner_rejects_negative_output_limit(runner, tmp_path: Path):
+    config = RunnerConfig(max_output_bytes=-1, allowed_roots=[tmp_path])
+    with pytest.raises(RunnerSecurityError, match='max_output_bytes'):
+        if runner is run_command:
+            await runner([sys.executable, '-c', 'pass'], cwd=tmp_path, config=config)
+        else:
+            runner([sys.executable, '-c', 'pass'], cwd=tmp_path, config=config)
+
+
+@pytest.mark.parametrize('runner', [run_command, run_command_sync])
+async def test_runner_env_override_does_not_restore_loader_variables(runner, tmp_path: Path):
+    code = "import os; print(os.getenv('LD_PRELOAD', 'CLEAN'))"
+    config = RunnerConfig(
+        allowed_roots=[tmp_path],
+        env_override={'LD_PRELOAD': '/malicious.so'},
+    )
+    if runner is run_command:
+        result = await runner([sys.executable, '-c', code], cwd=tmp_path, config=config)
+    else:
+        result = runner([sys.executable, '-c', code], cwd=tmp_path, config=config)
+    assert result.return_code == 0
+    assert result.stdout.strip() == 'CLEAN'

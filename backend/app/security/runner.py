@@ -180,14 +180,14 @@ async def run_command(
         return RunResult(return_code=-1, stdout="", stderr=f"Permission denied: {argv[0]}")
 
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+        stdout_bytes, stderr_bytes, _ = await asyncio.wait_for(
             asyncio.gather(
                 _drain_bounded_async(proc.stdout, config.max_output_bytes),
                 _drain_bounded_async(proc.stderr, config.max_output_bytes),
                 proc.wait(),
             ),
             timeout=config.timeout,
-        )[:2]
+        )
     except (TimeoutError, asyncio.CancelledError) as exc:
         if proc.returncode is None:
             proc.kill()
@@ -255,12 +255,12 @@ def run_command_sync(
                 proc.kill()
             proc.wait()
             return RunResult(return_code=-1, stdout="", stderr="Command timed out", timed_out=True)
-        finally:
-            proc.stdout.close()
-            proc.stderr.close()
-
+        stdout_bytes = stdout_future.result()
+        stderr_bytes = stderr_future.result()
+        proc.stdout.close()
+        proc.stderr.close()
         return RunResult(
             return_code=proc.returncode if proc.returncode is not None else 0,
-            stdout=stdout_future.result().decode("utf-8", errors="replace"),
-            stderr=stderr_future.result().decode("utf-8", errors="replace"),
+            stdout=stdout_bytes.decode("utf-8", errors="replace"),
+            stderr=stderr_bytes.decode("utf-8", errors="replace"),
         )

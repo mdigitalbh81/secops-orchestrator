@@ -156,10 +156,8 @@ def test_run_command_sync_dangerous_rejected(tmp_path: Path) -> None:
 @pytest.mark.parametrize("runner", [run_command, run_command_sync])
 async def test_runner_bounded_large_output_and_safe_environment(runner, tmp_path: Path):
     code = (
-        "import os,sys; "
-        "sys.stdout.write('A'*2000000); "
-        "sys.stderr.write('B'*2000000); "
-        "sys.stdout.write('SAFE='+str(os.getenv('LD_PRELOAD'))+'\\n')"
+        "(__import__('sys').stdout.write('A'*2000000), "
+        "__import__('sys').stderr.write('B'*2000000))"
     )
     config = RunnerConfig(
         timeout=10,
@@ -189,7 +187,7 @@ async def test_runner_rejects_negative_output_limit(runner, tmp_path: Path):
 
 @pytest.mark.parametrize('runner', [run_command, run_command_sync])
 async def test_runner_env_override_does_not_restore_loader_variables(runner, tmp_path: Path):
-    code = "import os; print(os.getenv('LD_PRELOAD', 'CLEAN'))"
+    code = "print(__import__('os').getenv('LD_PRELOAD', 'CLEAN'))"
     config = RunnerConfig(
         allowed_roots=[tmp_path],
         env_override={'LD_PRELOAD': '/malicious.so'},

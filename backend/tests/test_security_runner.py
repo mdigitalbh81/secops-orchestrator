@@ -179,10 +179,11 @@ async def test_runner_bounded_large_output_and_safe_environment(runner, tmp_path
 @pytest.mark.parametrize('runner', [run_command, run_command_sync])
 async def test_runner_rejects_negative_output_limit(runner, tmp_path: Path):
     config = RunnerConfig(max_output_bytes=-1, allowed_roots=[tmp_path])
-    with pytest.raises(RunnerSecurityError, match='max_output_bytes'):
-        if runner is run_command:
+    if runner is run_command:
+        with pytest.raises(RunnerSecurityError, match='max_output_bytes'):
             await runner([sys.executable, '-c', 'pass'], cwd=tmp_path, config=config)
-        else:
+    else:
+        with pytest.raises(RunnerSecurityError, match='max_output_bytes'):
             runner([sys.executable, '-c', 'pass'], cwd=tmp_path, config=config)
 
 
